@@ -1,0 +1,162 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple AI Chat Agent</title>
+    <meta name="description" content="Interactive AI chat assistant with multiple language models including GPT-4.1, Gemini, and Gemma.">
+    <meta name="keywords" content="AI chat, GPT, Gemini, Gemma, AI assistant">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://yapweijun1996.github.io/Simple-Ai-Agent-v9/">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    
+    <!-- Open Graph Tags -->
+    <meta property="og:title" content="Simple AI Chat Agent">
+    <meta property="og:description" content="Interactive AI chat assistant with multiple language models including GPT-4.1, Gemini, and Gemma.">
+    <meta property="og:image" content="https://yapweijun1996.github.io/Simple-Ai-Agent-v9/og_img.jpg">
+    <meta property="og:url" content="https://yapweijun1996.github.io/Simple-Ai-Agent-v9/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Simple AI Chat Agent">
+    
+    <!-- Twitter Card Tags -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Simple AI Chat Agent">
+    <meta name="twitter:description" content="Interactive AI chat assistant with multiple language models including GPT-4.1, Gemini, and Gemma.">
+    <meta name="twitter:image" content="https://yapweijun1996.github.io/Simple-Ai-Agent-v9/og_img.jpg">
+    
+    <link rel="stylesheet" href="css/styles.css">
+    
+    <!-- Structured Data / JSON-LD -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Simple AI Chat Agent",
+      "description": "Interactive AI chat assistant with multiple language models including GPT-4.1, Gemini, and Gemma.",
+      "url": "https://yapweijun1996.github.io/Simple-Ai-Agent-v5/",
+      "applicationCategory": "AIApplication",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    }
+    </script>
+</head>
+<body>
+    <!-- Main chat container -->
+    <main id="chat-container" class="chat-app" style="display: none;">
+        <!-- Chat Header Component -->
+        <header class="chat-app__header">
+            <h2 class="chat-app__header-title">AI Chat</h2>
+            <div>
+                <button id="clear-chat-button" class="chat-app__settings-button" aria-label="Clear chat history">
+                    <span class="chat-app__settings-button-text">Clear Chat</span>
+                </button>
+                <button id="settings-button" class="chat-app__settings-button" aria-label="Open Settings">
+                    <span class="chat-app__settings-button-text">Settings</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Token Usage Component -->
+        <div id="token-usage" class="chat-app__token-usage">Total tokens used: 0</div>
+
+        <!-- Chat Messages Component -->
+        <section id="chat-window" class="chat-app__window" aria-live="polite" role="log"></section>
+        <div id="status-bar" class="chat-app__status-bar" role="status" aria-live="polite" style="visibility:hidden;"></div>
+
+        <!-- Chat Controls Component -->
+        <footer id="controls" class="chat-app__controls">
+            <textarea id="message-input" class="chat-app__message-input" rows="1" placeholder="Type your message here" aria-label="Message Input"></textarea>
+            <button id="send-button" class="chat-app__send-button">Send</button>
+        </footer>
+    </main>
+
+    <!-- Settings modal template -->
+    <template id="settings-modal-template">
+        <div id="settings-modal" class="settings-modal">
+            <div class="settings-modal__content">
+                <h3 class="settings-modal__title">Settings</h3>
+                <div class="settings-modal__item">
+                    <label for="model-select" class="settings-modal__label">AI Model:</label>
+                    <select id="model-select" class="chat-app__model-select settings-modal__select" aria-label="Select AI Model">
+                        <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                        <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
+                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                        <option value="gemma-3-27b-it">Gemma 3-27b IT</option>
+                    </select>
+                </div>
+                <div class="settings-modal__item">
+                    <label for="streaming-toggle" class="settings-modal__label">
+                        <input type="checkbox" id="streaming-toggle" class="settings-modal__checkbox">
+                        Stream responses
+                    </label>
+                </div>
+                <div class="settings-modal__item">
+                    <label for="cot-toggle" class="settings-modal__label">
+                        <input type="checkbox" id="cot-toggle" class="settings-modal__checkbox">
+                        Enable Chain of Thought reasoning
+                    </label>
+                </div>
+                <div class="settings-modal__item">
+                    <label for="show-thinking-toggle" class="settings-modal__label">
+                        <input type="checkbox" id="show-thinking-toggle" class="settings-modal__checkbox">
+                        Show AI thinking process
+                    </label>
+                </div>
+                <div class="settings-modal__actions">
+                    <button id="save-settings" class="settings-modal__button settings-modal__button--primary">Save</button>
+                    <button id="close-settings" class="settings-modal__button">Close</button>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Message template -->
+    <template id="message-template">
+        <article class="chat-app__message" role="article">
+            <div class="chat-app__message-content"></div>
+        </article>
+    </template>
+
+    <!-- Login modal template -->
+    <template id="login-modal-template">
+        <div id="login-modal" class="settings-modal">
+            <div class="settings-modal__content">
+                <h3 class="settings-modal__title">API Key Password</h3>
+                <p>Please enter your password to decrypt the API key needed for this application.</p>
+                <div class="settings-modal__item">
+                    <input type="password" id="api-password" class="chat-app__message-input" placeholder="Enter password">
+                </div>
+                <div class="settings-modal__item">
+                    <label for="remember-password" class="settings-modal__label">
+                        <input type="checkbox" id="remember-password" class="settings-modal__checkbox">
+                        Remember password for future sessions
+                    </label>
+                </div>
+                <div class="settings-modal__actions">
+                    <button id="login-button" class="settings-modal__button settings-modal__button--primary">Login</button>
+                </div>
+                <div id="login-error" style="color: var(--danger-color); margin-top: var(--space-md); display: none;">
+                    Invalid password. Please try again.
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Scripts -->
+    <script src="js/utils.js"></script>
+    <script src="js/api-service.js"></script>
+    <script src="js/tools-service.js"></script>
+    <script src="js/ui-controller.js"></script>
+    <script src="js/chat-controller.js"></script>
+    <script src="js/settings-controller.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html> 
