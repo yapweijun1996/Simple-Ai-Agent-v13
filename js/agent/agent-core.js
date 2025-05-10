@@ -12,15 +12,20 @@ import { runTool } from './tools/index.js';
  * @returns {Promise<object>} - Reasoning steps and final answer
  */
 export async function handleUserMessage(message, settings, state) {
-    // 1. Detect tool needs (stub)
-    // 2. Run tools if needed (stub)
-    // 3. Prepare context
-    // 4. Call model adapter (stub)
-    // 5. Track reasoning steps (stub)
-    // 6. Return result for UI
+    // 1. Select model adapter
+    const modelName = settings.selectedModel;
+    const adapter = getModelAdapter(modelName);
+    // 2. Prepare input/context
+    const input = { message, model: modelName };
+    const context = { chatHistory: state.chatHistory };
+    // 3. Call model adapter
+    const result = await adapter.runModel(input, context);
+    // 4. Return reasoning steps and final answer
     return {
-        reasoningSteps: [],
-        finalAnswer: null
+        reasoningSteps: [
+            { type: 'model', model: modelName, output: result.output }
+        ],
+        finalAnswer: result.output
     };
 }
 

@@ -1,6 +1,8 @@
 // gemma-adapter.js
 // Adapter for Gemma models
 
+import ApiService from '../../api-service.js';
+
 /**
  * Runs the Gemma model with the given input and context.
  * @param {object} input - The input for the model
@@ -8,9 +10,8 @@
  * @returns {Promise<object>} - Model output and status
  */
 export async function runModel(input, context) {
-    // TODO: Implement Gemma API call
     return {
-        output: null,
+        output: 'Gemma model is not yet implemented in this app.',
         isFinal: true
     };
 } 
