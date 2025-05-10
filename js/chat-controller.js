@@ -488,17 +488,11 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     chatHistory,
                     (chunk, fullText) => {
                         streamedResponse = fullText;
-                        
                         if (settings.enableCoT) {
-                            // Process the streamed response for CoT
                             const processed = processPartialCoTResponse(fullText);
-                            
-                            // Only show "Thinking..." if we're still waiting
                             if (isThinking && fullText.includes('Answer:')) {
                                 isThinking = false;
                             }
-                            
-                            // Format according to current stage and settings
                             const displayText = formatResponseForDisplay(processed);
                             UIController.updateMessageContent(aiMsgElement, displayText);
                         } else {
@@ -514,33 +508,28 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     return;
                 }
                 
-                // Process response for CoT if enabled
                 if (settings.enableCoT) {
                     const processed = processCoTResponse(fullReply);
-                    
-                    // Add thinking to debug console if available
                     if (processed.thinking) {
                         console.log('AI Thinking:', processed.thinking);
                     }
-                    
-                    // Update UI with appropriate content based on settings
                     const displayText = formatResponseForDisplay(processed);
                     UIController.updateMessageContent(aiMsgElement, displayText);
-                    
-                    // Add full response to chat history
                     chatHistory.push({ role: 'assistant', content: fullReply });
                 } else {
-                    // Add to chat history after completed
                     chatHistory.push({ role: 'assistant', content: fullReply });
                 }
-                
-                // Get token usage
                 const tokenCount = await ApiService.getTokenUsage(model, chatHistory);
                 if (tokenCount) {
                     totalTokens += tokenCount;
                 }
             } catch (err) {
-                UIController.updateMessageContent(aiMsgElement, 'Error: ' + err.message);
+                // Enhanced error feedback for Gemini/Gemma
+                let userMsg = 'Error: ' + err.message;
+                if (userMsg.includes('403') || userMsg.toLowerCase().includes('cors')) {
+                    userMsg += '\nGemini/Gemma API is not accessible from the browser due to CORS or API key issues. Please check your API key, enable the model in your Google Cloud console, or use a backend proxy.';
+                }
+                UIController.updateMessageContent(aiMsgElement, userMsg);
                 throw err;
             } finally {
                 isThinking = false;
@@ -550,41 +539,27 @@ Answer: [your final, concise answer based on the reasoning above]`;
             try {
                 const session = ApiService.createGeminiSession(model);
                 const result = await session.sendMessage(message, chatHistory);
-                
-                // Update token usage if available
                 if (result.usageMetadata && typeof result.usageMetadata.totalTokenCount === 'number') {
                     totalTokens += result.usageMetadata.totalTokenCount;
                 }
-                
-                // Process response
                 const candidate = result.candidates[0];
                 let textResponse = '';
-                
                 if (candidate.content.parts) {
                     textResponse = candidate.content.parts.map(p => p.text).join(' ');
                 } else if (candidate.content.text) {
                     textResponse = candidate.content.text;
                 }
-                
-                // Intercept tool call JSON
                 const toolCall = extractToolCall(textResponse);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
                     await processToolCall(toolCall);
                     return;
                 }
-                
                 if (settings.enableCoT) {
                     const processed = processCoTResponse(textResponse);
-                    
-                    // Add thinking to debug console if available
                     if (processed.thinking) {
                         console.log('AI Thinking:', processed.thinking);
                     }
-                    
-                    // Add the full response to chat history
                     chatHistory.push({ role: 'assistant', content: textResponse });
-                    
-                    // Show appropriate content in the UI based on settings
                     const displayText = formatResponseForDisplay(processed);
                     UIController.addMessage('ai', displayText);
                 } else {
@@ -592,6 +567,12 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     UIController.addMessage('ai', textResponse);
                 }
             } catch (err) {
+                // Enhanced error feedback for Gemini/Gemma
+                let userMsg = 'Error: ' + err.message;
+                if (userMsg.includes('403') || userMsg.toLowerCase().includes('cors')) {
+                    userMsg += '\nGemini/Gemma API is not accessible from the browser due to CORS or API key issues. Please check your API key, enable the model in your Google Cloud console, or use a backend proxy.';
+                }
+                UIController.addMessage('ai', userMsg);
                 throw err;
             }
         }
