@@ -1186,4 +1186,6 @@ Answer: [your final, concise answer based on the reasoning above]`;
         processToolCall,
         getToolCallHistory: () => [...toolCallHistory],
     };
-})(); 
+})();
+
+export default ChatController; 
