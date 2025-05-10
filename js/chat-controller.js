@@ -492,39 +492,41 @@ Answer: [your final, concise answer based on the reasoning above]`;
         if (!message) return;
         originalUserQuestion = message;
         toolWorkflowActive = true;
-        
+
         // Show status and disable inputs while awaiting AI
         UIController.showStatus('Sending message...');
         document.getElementById('message-input').disabled = true;
         document.getElementById('send-button').disabled = true;
-        
+
         // Reset the partial response tracking
         lastThinkingContent = '';
         lastAnswerContent = '';
-        
+
         // Add user message to UI
         UIController.addMessage('user', message);
         UIController.clearUserInput();
-        
-        // Apply CoT formatting if enabled
-        const enhancedMessage = settings.enableCoT ? enhanceWithCoT(message) : message;
-        
-        // Get the selected model from SettingsController
+
+        // Get the selected model and settings
         const currentSettings = SettingsController.getSettings();
-        const selectedModel = currentSettings.selectedModel;
-        
+        const state = { chatHistory, currentModel: currentSettings.selectedModel };
         try {
-            if (selectedModel.startsWith('gpt')) {
-                // For OpenAI, add enhanced message to chat history before sending to include the CoT prompt.
-                chatHistory.push({ role: 'user', content: enhancedMessage });
-                console.log("Sent enhanced message to GPT:", enhancedMessage);
-                await handleOpenAIMessage(selectedModel, enhancedMessage);
-            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
-                // For Gemini, ensure chat history starts with user message if empty
-                if (chatHistory.length === 0) {
-                    chatHistory.push({ role: 'user', content: '' });
-                }
-                await handleGeminiMessage(selectedModel, enhancedMessage);
+            // Use the new agent-core workflow
+            const result = await handleUserMessage(message, currentSettings, state);
+            // Show reasoning steps if enabled
+            if (currentSettings.showThinking && result.reasoningSteps) {
+                result.reasoningSteps.forEach(step => {
+                    if (step.type === 'model') {
+                        UIController.addMessage('ai', `[Model: ${step.model}]\n${step.output}`);
+                    } else if (step.type === 'tool') {
+                        UIController.addMessage('ai', `[Tool: ${step.tool}]\nArgs: ${JSON.stringify(step.args)}\nResult: ${JSON.stringify(step.result)}`);
+                    } else if (step.type === 'error') {
+                        UIController.addMessage('ai', `Error: ${step.message}`);
+                    }
+                });
+            }
+            // Show final answer
+            if (result.finalAnswer) {
+                UIController.addMessage('ai', result.finalAnswer);
             }
         } catch (error) {
             console.error('Error sending message:', error);
