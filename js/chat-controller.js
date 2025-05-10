@@ -154,7 +154,7 @@ Begin Reasoning Now:
                         UIController.showSpinner('Summarizing retrieved information before answering...');
                         let summary = '';
                         if (selectedModel.startsWith('gpt')) {
-                            const prompt = `Given the following information retrieved from the web, summarize only the facts and details that are most relevant to answering this question:\n\nQuestion: ${args.query}\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary (in bullet points if possible) that will help answer the question above.`;
+                            const prompt = `Given the following information retrieved from the web, extract and list all price information for the Proton S70, including variant names and prices. If possible, present the prices in a table or bullet points. Ignore unrelated details.\n\nQuestion: What is the price list for the Proton S70?\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary of the price list.`;
                             const res = await ApiService.sendOpenAIRequest(selectedModel, [
                                 { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
                                 { role: 'user', content: prompt }
@@ -162,7 +162,7 @@ Begin Reasoning Now:
                             summary = res.choices[0].message.content.trim();
                         } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
                             const session = ApiService.createGeminiSession(selectedModel);
-                            const prompt = `Given the following information retrieved from the web, summarize only the facts and details that are most relevant to answering this question:\n\nQuestion: ${args.query}\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary (in bullet points if possible) that will help answer the question above.`;
+                            const prompt = `Given the following information retrieved from the web, extract and list all price information for the Proton S70, including variant names and prices. If possible, present the prices in a table or bullet points. Ignore unrelated details.\n\nQuestion: What is the price list for the Proton S70?\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary of the price list.`;
                             const chatHistory = [
                                 { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
                                 { role: 'user', content: prompt }
@@ -187,7 +187,7 @@ Begin Reasoning Now:
                     urlsMessage = `You may also find more details at these links:\n${[...allSearchUrls].join('\n')}\n\n`;
                 }
                 const fallbackPrompt =
-`I'm unable to access live web results right now due to technical issues with all search tools.\n\n${contextMessage}${urlsMessage}Based on the information above and my own knowledge, here is my best attempt to answer your question:\n\nQuestion: ${args.query}\n\nIf you need more up-to-date or detailed information, you may want to check the links above directly or try again later.`;
+`I'm unable to access live web results right now due to technical issues with all search tools.\n\n${contextMessage}${urlsMessage}Based on the information above and my own knowledge, here is my best attempt to answer your question:\n\nQuestion: ${args.query}\n\nPlease extract and list all price information for the Proton S70 from the summary above. If you cannot find any, say so. If you need more up-to-date or detailed information, you may want to check the links above directly or try again later.`;
                 if (selectedModel.startsWith('gpt')) {
                     await handleOpenAIMessage(selectedModel, fallbackPrompt);
                 } else {
