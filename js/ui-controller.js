@@ -2,8 +2,6 @@
  * ./js/ui-controller.js
  * UI Controller Module - Manages UI elements and interactions
  * Handles chat display, inputs, and visual elements
- *
- * Note: 'Thinking/Answer' parsing and HTML escaping are handled by Utils for consistency across modules.
  */
 const UIController = (function() {
     'use strict';
@@ -17,11 +15,6 @@ const UIController = (function() {
     const urlOffsets = new Map();
     
     let summarizeBtn = null;
-    
-    // New: Track selected search result URLs
-    let selectedSearchUrls = new Set();
-    let batchReadHandler = null;
-    let batchReadBtn = null;
     
     /**
      * Initializes the UI controller
@@ -175,16 +168,39 @@ const UIController = (function() {
      * @returns {string} - HTML formatted text
      */
     function formatTextWithReasoningHighlights(text) {
-        // Use shared utility for parsing 'Thinking:' and 'Answer:' sections
-        const parsed = Utils.parseThinkingAnswerResponse(text);
-        if (parsed.hasStructuredResponse && (parsed.thinking || parsed.answer)) {
-            // Escape HTML for both thinking and answer content
-            const thinkingHtml = Utils.escapeHtml(parsed.thinking || '');
-            const answerHtml = Utils.escapeHtml(parsed.answer || '');
-            return `<div class="thinking-section"><strong>Thinking:</strong><br>${thinkingHtml.replace(/\n/g, '<br>')}</div>\n<div class="answer-section"><strong>Answer:</strong><br>${answerHtml.replace(/\n/g, '<br>')}</div>`;
+        // Escape any HTML first
+        let escapedText = escapeHtml(text);
+        
+        // Replace newlines with <br> tags
+        let formattedText = escapedText.replace(/\n/g, '<br>');
+        
+        // Check for and highlight reasoning patterns
+        if (text.includes('Thinking:') && text.includes('Answer:')) {
+            // Split into thinking and answer sections
+            const thinkingMatch = text.match(/Thinking:(.*?)(?=Answer:|$)/s);
+            const answerMatch = text.match(/Answer:(.*?)$/s);
+            
+            if (thinkingMatch && answerMatch) {
+                const thinkingContent = escapeHtml(thinkingMatch[1].trim());
+                const answerContent = escapeHtml(answerMatch[1].trim());
+                
+                formattedText = `<div class="thinking-section"><strong>Thinking:</strong><br>${thinkingContent.replace(/\n/g, '<br>')}</div>
+                                <div class="answer-section"><strong>Answer:</strong><br>${answerContent.replace(/\n/g, '<br>')}</div>`;
+            }
         }
-        // Otherwise, escape and replace newlines with <br>
-        return Utils.escapeHtml(text).replace(/\n/g, '<br>');
+        
+        return formattedText;
+    }
+    
+    /**
+     * Safely escapes HTML
+     * @param {string} html - The string to escape
+     * @returns {string} - Escaped HTML string
+     */
+    function escapeHtml(html) {
+        const div = document.createElement('div');
+        div.textContent = html;
+        return div.innerHTML;
     }
     
     /**
@@ -221,7 +237,7 @@ const UIController = (function() {
                 }
             } else if (insideCode) {
                 // Inside code block
-                formatted += Utils.escapeHtml(line) + '\n';
+                formatted += escapeHtml(line) + '\n';
             } else {
                 // Regular text
                 currentText += (currentText ? '\n' : '') + line;
@@ -306,7 +322,7 @@ const UIController = (function() {
     }
 
     /**
-     * Adds a search result to the chat window with a checkbox and 'Read More' button
+     * Adds a search result to the chat window with a 'Read More' button
      * @param {Object} result - {title, url, snippet}
      * @param {Function} onReadMore - Callback when 'Read More' is clicked
      */
@@ -316,60 +332,19 @@ const UIController = (function() {
         const chatWindow = document.getElementById('chat-window');
         const article = document.createElement('article');
         article.className = 'chat-app__message ai-message search-result';
-        // Add checkbox for selection
         article.innerHTML = `
             <div class="chat-app__message-content" aria-label="Search result">
-                <input type="checkbox" class="search-result-checkbox" aria-label="Select this result" style="margin-right:8px;">
                 <strong><a href="${result.url}" target="_blank" rel="noopener noreferrer" tabindex="0">${Utils.escapeHtml(result.title)}</a></strong><br>
                 <small>${Utils.escapeHtml(result.url)}</small>
                 <p>${Utils.escapeHtml(result.snippet)}</p>
                 <button class="read-more-btn" aria-label="Read more from ${Utils.escapeHtml(result.title)}">Read More</button>
             </div>
         `;
-        // Checkbox logic
-        const checkbox = article.querySelector('.search-result-checkbox');
-        checkbox.addEventListener('change', (e) => {
-            if (checkbox.checked) {
-                selectedSearchUrls.add(result.url);
-            } else {
-                selectedSearchUrls.delete(result.url);
-            }
-        });
-        // Read more button logic
         const btn = article.querySelector('.read-more-btn');
         btn.addEventListener('click', () => onReadMore(result.url));
         btn.tabIndex = 0;
         chatWindow.appendChild(article);
         article.scrollIntoView({ behavior: 'smooth', block: 'end' });
-        // Add or show the batch read button if not present
-        maybeShowBatchReadBtn();
-    }
-
-    // Show or create the batch read button
-    function maybeShowBatchReadBtn() {
-        if (!batchReadHandler) return;
-        if (batchReadBtn) return;
-        const chatWindow = document.getElementById('chat-window');
-        batchReadBtn = document.createElement('button');
-        batchReadBtn.className = 'batch-read-btn';
-        batchReadBtn.textContent = 'Read Selected';
-        batchReadBtn.setAttribute('aria-label', 'Read all selected search results');
-        batchReadBtn.tabIndex = 0;
-        batchReadBtn.style.margin = '12px 0 0 0';
-        batchReadBtn.addEventListener('click', () => {
-            if (selectedSearchUrls.size > 0) {
-                batchReadHandler(Array.from(selectedSearchUrls));
-            }
-        });
-        chatWindow.appendChild(batchReadBtn);
-        batchReadBtn.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }
-
-    // Public API addition: allow ChatController to set the batch read handler
-    function setupBatchReadHandler(handler) {
-        batchReadHandler = handler;
-        // If there are already search results, show the button
-        maybeShowBatchReadBtn();
     }
 
     /**
@@ -438,7 +413,6 @@ const UIController = (function() {
         showSpinner,
         hideSpinner,
         addSummarizeButton,
-        setupBatchReadHandler,
         /**
          * Adds a chat bubble with raw HTML content (for tool results)
          * @param {string} sender - 'user' or 'ai'

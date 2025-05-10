@@ -2,8 +2,6 @@
  * ./js/chat-controller.js
  * Chat Controller Module - Manages chat history and message handling
  * Coordinates between UI and API service for sending/receiving messages
- *
- * Note: 'Thinking/Answer' parsing is handled by Utils.parseThinkingAnswerResponse for consistency across modules.
  */
 const ChatController = (function() {
     'use strict';
@@ -229,12 +227,55 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {Object} - Object with thinking and answer components
      */
     function processCoTResponse(response) {
-        // Use shared utility for parsing 'Thinking:' and 'Answer:' sections
-        const parsed = Utils.parseThinkingAnswerResponse(response);
-        // Update the last known content if available
-        if (parsed.thinking) lastThinkingContent = parsed.thinking;
-        if (parsed.answer) lastAnswerContent = parsed.answer;
-        return parsed;
+        console.log("processCoTResponse received:", response);
+        // Check if response follows the Thinking/Answer format
+        const thinkingMatch = response.match(/Thinking:(.*?)(?=Answer:|$)/s);
+        const answerMatch = response.match(/Answer:(.*?)$/s);
+        console.log("processCoTResponse: thinkingMatch", thinkingMatch, "answerMatch", answerMatch);
+        
+        if (thinkingMatch && answerMatch) {
+            const thinking = thinkingMatch[1].trim();
+            const answer = answerMatch[1].trim();
+            
+            // Update the last known content
+            lastThinkingContent = thinking;
+            lastAnswerContent = answer;
+            
+            return {
+                thinking: thinking,
+                answer: answer,
+                hasStructuredResponse: true
+            };
+        } else if (response.startsWith('Thinking:') && !response.includes('Answer:')) {
+            // Partial thinking (no answer yet)
+            const thinking = response.replace(/^Thinking:/, '').trim();
+            lastThinkingContent = thinking;
+            
+            return {
+                thinking: thinking,
+                answer: lastAnswerContent,
+                hasStructuredResponse: true,
+                partial: true,
+                stage: 'thinking'
+            };
+        } else if (response.includes('Thinking:') && !thinkingMatch) {
+            // Malformed response (partial reasoning)
+            const thinking = response.replace(/^.*?Thinking:/s, 'Thinking:');
+            
+            return {
+                thinking: thinking.replace(/^Thinking:/, '').trim(),
+                answer: '',
+                hasStructuredResponse: false,
+                partial: true
+            };
+        }
+        
+        // If not properly formatted, return the whole response as the answer
+        return {
+            thinking: '',
+            answer: response,
+            hasStructuredResponse: false
+        };
     }
     
     /**
@@ -243,8 +284,39 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {Object} - The processed response object
      */
     function processPartialCoTResponse(fullText) {
-        // Use shared utility for parsing partial 'Thinking:' and 'Answer:' sections
-        return Utils.parseThinkingAnswerResponse(fullText);
+        console.log("processPartialCoTResponse received:", fullText);
+        if (fullText.includes('Thinking:') && !fullText.includes('Answer:')) {
+            // Only thinking so far
+            const thinking = fullText.replace(/^.*?Thinking:/s, '').trim();
+            
+            return {
+                thinking: thinking,
+                answer: '',
+                hasStructuredResponse: true,
+                partial: true,
+                stage: 'thinking'
+            };
+        } else if (fullText.includes('Thinking:') && fullText.includes('Answer:')) {
+            // Both thinking and answer are present
+            const thinkingMatch = fullText.match(/Thinking:(.*?)(?=Answer:|$)/s);
+            const answerMatch = fullText.match(/Answer:(.*?)$/s);
+            
+            if (thinkingMatch && answerMatch) {
+                return {
+                    thinking: thinkingMatch[1].trim(),
+                    answer: answerMatch[1].trim(),
+                    hasStructuredResponse: true,
+                    partial: false
+                };
+            }
+        }
+        
+        // Default case - treat as normal text
+        return {
+            thinking: '',
+            answer: fullText,
+            hasStructuredResponse: false
+        };
     }
 
     /**
@@ -488,11 +560,17 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     chatHistory,
                     (chunk, fullText) => {
                         streamedResponse = fullText;
+                        
                         if (settings.enableCoT) {
+                            // Process the streamed response for CoT
                             const processed = processPartialCoTResponse(fullText);
+                            
+                            // Only show "Thinking..." if we're still waiting
                             if (isThinking && fullText.includes('Answer:')) {
                                 isThinking = false;
                             }
+                            
+                            // Format according to current stage and settings
                             const displayText = formatResponseForDisplay(processed);
                             UIController.updateMessageContent(aiMsgElement, displayText);
                         } else {
@@ -508,28 +586,33 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     return;
                 }
                 
+                // Process response for CoT if enabled
                 if (settings.enableCoT) {
                     const processed = processCoTResponse(fullReply);
+                    
+                    // Add thinking to debug console if available
                     if (processed.thinking) {
                         console.log('AI Thinking:', processed.thinking);
                     }
+                    
+                    // Update UI with appropriate content based on settings
                     const displayText = formatResponseForDisplay(processed);
                     UIController.updateMessageContent(aiMsgElement, displayText);
+                    
+                    // Add full response to chat history
                     chatHistory.push({ role: 'assistant', content: fullReply });
                 } else {
+                    // Add to chat history after completed
                     chatHistory.push({ role: 'assistant', content: fullReply });
                 }
+                
+                // Get token usage
                 const tokenCount = await ApiService.getTokenUsage(model, chatHistory);
                 if (tokenCount) {
                     totalTokens += tokenCount;
                 }
             } catch (err) {
-                // Enhanced error feedback for Gemini/Gemma
-                let userMsg = 'Error: ' + err.message;
-                if (userMsg.includes('403') || userMsg.toLowerCase().includes('cors')) {
-                    userMsg += '\nGemini/Gemma API is not accessible from the browser due to CORS or API key issues. Please check your API key, enable the model in your Google Cloud console, or use a backend proxy.';
-                }
-                UIController.updateMessageContent(aiMsgElement, userMsg);
+                UIController.updateMessageContent(aiMsgElement, 'Error: ' + err.message);
                 throw err;
             } finally {
                 isThinking = false;
@@ -539,27 +622,41 @@ Answer: [your final, concise answer based on the reasoning above]`;
             try {
                 const session = ApiService.createGeminiSession(model);
                 const result = await session.sendMessage(message, chatHistory);
+                
+                // Update token usage if available
                 if (result.usageMetadata && typeof result.usageMetadata.totalTokenCount === 'number') {
                     totalTokens += result.usageMetadata.totalTokenCount;
                 }
+                
+                // Process response
                 const candidate = result.candidates[0];
                 let textResponse = '';
+                
                 if (candidate.content.parts) {
                     textResponse = candidate.content.parts.map(p => p.text).join(' ');
                 } else if (candidate.content.text) {
                     textResponse = candidate.content.text;
                 }
+                
+                // Intercept tool call JSON
                 const toolCall = extractToolCall(textResponse);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
                     await processToolCall(toolCall);
                     return;
                 }
+                
                 if (settings.enableCoT) {
                     const processed = processCoTResponse(textResponse);
+                    
+                    // Add thinking to debug console if available
                     if (processed.thinking) {
                         console.log('AI Thinking:', processed.thinking);
                     }
+                    
+                    // Add the full response to chat history
                     chatHistory.push({ role: 'assistant', content: textResponse });
+                    
+                    // Show appropriate content in the UI based on settings
                     const displayText = formatResponseForDisplay(processed);
                     UIController.addMessage('ai', displayText);
                 } else {
@@ -567,12 +664,6 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     UIController.addMessage('ai', textResponse);
                 }
             } catch (err) {
-                // Enhanced error feedback for Gemini/Gemma
-                let userMsg = 'Error: ' + err.message;
-                if (userMsg.includes('403') || userMsg.toLowerCase().includes('cors')) {
-                    userMsg += '\nGemini/Gemma API is not accessible from the browser due to CORS or API key issues. Please check your API key, enable the model in your Google Cloud console, or use a backend proxy.';
-                }
-                UIController.addMessage('ai', userMsg);
                 throw err;
             }
         }
@@ -693,48 +784,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
         return allChunks;
     }
 
-    // Suggestion logic: ask AI which results to read
-    async function suggestResultsToRead(results, query) {
-        if (!results || results.length === 0) return;
-        // Enhanced prompt: ask for ranking, confidence, and reasons
-        const prompt = `Given these search results for the query: "${query}", rank the results (by number) in order of relevance to read in detail. For each, provide a confidence score (0-100) and a brief reason. Reply in the format: 1 (95): Reason, 3 (80): Reason, ...`;
-        const numberedResults = results.map((r, i) => `${i+1}. ${r.title} - ${r.snippet}`).join('\n');
-        const fullPrompt = `${prompt}\n\n${numberedResults}`;
-        const selectedModel = SettingsController.getSettings().selectedModel;
-        let aiReply = '';
-        try {
-            if (selectedModel.startsWith('gpt')) {
-                const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                    { role: 'system', content: 'You are an assistant helping to select and rank the most relevant search results.' },
-                    { role: 'user', content: fullPrompt }
-                ]);
-                aiReply = res.choices[0].message.content.trim();
-            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
-                const session = ApiService.createGeminiSession(selectedModel);
-                const chatHistory = [
-                    { role: 'system', content: 'You are an assistant helping to select and rank the most relevant search results.' },
-                    { role: 'user', content: fullPrompt }
-                ];
-                const result = await session.sendMessage(fullPrompt, chatHistory);
-                const candidate = result.candidates[0];
-                if (candidate.content.parts) {
-                    aiReply = candidate.content.parts.map(p => p.text).join(' ').trim();
-                } else if (candidate.content.text) {
-                    aiReply = candidate.content.text.trim();
-                }
-            }
-            if (aiReply) {
-                UIController.addMessage('ai', `AI suggests reading (ranked): ${aiReply}`);
-                // Parse numbers from AI reply (e.g., "1 (95): Reason, 3 (80): Reason")
-                const nums = Array.from(aiReply.matchAll(/(\d+)\s*\(/g)).map(m => parseInt(m[1], 10));
-                await autoReadAndSummarizeFromSuggestion(nums.join(','));
-            }
-        } catch (err) {
-            // Ignore suggestion errors
-        }
-    }
-
-    // Batch read URLs in parallel (with concurrency limit)
+    // Autonomous follow-up: after AI suggests which results to read, auto-read and summarize
     async function autoReadAndSummarizeFromSuggestion(aiReply) {
         if (autoReadInProgress) return; // Prevent overlap
         if (!lastSearchResults || !Array.isArray(lastSearchResults) || !lastSearchResults.length) return;
@@ -743,22 +793,60 @@ Answer: [your final, concise answer based on the reasoning above]`;
         if (!match) return;
         const nums = match[1].split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
         if (!nums.length) return;
+        // Store highlighted indices (0-based)
         highlightedResultIndices = new Set(nums.map(n => n - 1));
+        // Map numbers to URLs (1-based index)
         const urlsToRead = nums.map(n => lastSearchResults[n-1]?.url).filter(Boolean);
         if (!urlsToRead.length) return;
         autoReadInProgress = true;
-        const concurrency = 3; // Limit to 3 parallel reads
         try {
-            let i = 0;
-            while (i < urlsToRead.length) {
-                const batch = urlsToRead.slice(i, i + concurrency);
-                UIController.showSpinner(`Reading URLs ${i + 1}-${i + batch.length} of ${urlsToRead.length}...`);
-                await Promise.all(batch.map(url => deepReadUrl(url, 5, 2000)));
-                i += concurrency;
+            for (let i = 0; i < urlsToRead.length; i++) {
+                const url = urlsToRead[i];
+                UIController.showSpinner(`Reading ${i + 1} of ${urlsToRead.length} URLs: ${url}...`);
+                await deepReadUrl(url, 5, 2000);
             }
+            // After all reads, auto-summarize
             await summarizeSnippets();
         } finally {
             autoReadInProgress = false;
+        }
+    }
+
+    // Suggestion logic: ask AI which results to read
+    async function suggestResultsToRead(results, query) {
+        if (!results || results.length === 0) return;
+        const prompt = `Given these search results for the query: "${query}", which results (by number) are most relevant to read in detail?\n\n${results.map((r, i) => `${i+1}. ${r.title} - ${r.snippet}`).join('\n')}\n\nReply with a comma-separated list of result numbers.`;
+        const selectedModel = SettingsController.getSettings().selectedModel;
+        let aiReply = '';
+        try {
+            if (selectedModel.startsWith('gpt')) {
+                const res = await ApiService.sendOpenAIRequest(selectedModel, [
+                    { role: 'system', content: 'You are an assistant helping to select the most relevant search results.' },
+                    { role: 'user', content: prompt }
+                ]);
+                aiReply = res.choices[0].message.content.trim();
+            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
+                const session = ApiService.createGeminiSession(selectedModel);
+                const chatHistory = [
+                    { role: 'system', content: 'You are an assistant helping to select the most relevant search results.' },
+                    { role: 'user', content: prompt }
+                ];
+                const result = await session.sendMessage(prompt, chatHistory);
+                const candidate = result.candidates[0];
+                if (candidate.content.parts) {
+                    aiReply = candidate.content.parts.map(p => p.text).join(' ').trim();
+                } else if (candidate.content.text) {
+                    aiReply = candidate.content.text.trim();
+                }
+            }
+            // Optionally, parse and highlight suggested results
+            if (aiReply) {
+                UIController.addMessage('ai', `AI suggests reading results: ${aiReply}`);
+                // Autonomous follow-up: auto-read and summarize
+                await autoReadAndSummarizeFromSuggestion(aiReply);
+            }
+        } catch (err) {
+            // Ignore suggestion errors
         }
     }
 
@@ -883,7 +971,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
         readSnippets = [];
     }
 
-    // After synthesizeFinalAnswer, check if info is sufficient
+    // Add synthesizeFinalAnswer helper
     async function synthesizeFinalAnswer(summaries) {
         if (!summaries || !originalUserQuestion) return;
         const selectedModel = SettingsController.getSettings().selectedModel;
@@ -913,50 +1001,11 @@ Answer: [your final, concise answer based on the reasoning above]`;
             if (finalAnswer) {
                 UIController.addMessage('ai', `Final Answer:\n${finalAnswer}`);
             }
-            // After final answer, check sufficiency
-            await checkInformationSufficiency(summaries, finalAnswer);
+            // Stop tool workflow after final answer
             toolWorkflowActive = false;
         } catch (err) {
             UIController.addMessage('ai', `Final answer synthesis failed. Error: ${err && err.message ? err.message : err}`);
             toolWorkflowActive = false;
-        }
-    }
-
-    // New: Check if information is sufficient and suggest query refinement
-    async function checkInformationSufficiency(summaries, finalAnswer) {
-        const selectedModel = SettingsController.getSettings().selectedModel;
-        const prompt = `Given the following answer and summaries, is the information sufficient to fully answer the user's question? If not, what is missing or what new search query would help?\n\nSummaries:\n${summaries}\n\nFinal Answer:\n${finalAnswer}\n\nReply YES if sufficient, or NO and suggest a better search query if not.`;
-        let aiReply = '';
-        try {
-            if (selectedModel.startsWith('gpt')) {
-                const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                    { role: 'system', content: 'You are an assistant that checks if the information is sufficient and suggests query refinement.' },
-                    { role: 'user', content: prompt }
-                ]);
-                aiReply = res.choices[0].message.content.trim();
-            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
-                const session = ApiService.createGeminiSession(selectedModel);
-                const chatHistory = [
-                    { role: 'system', content: 'You are an assistant that checks if the information is sufficient and suggests query refinement.' },
-                    { role: 'user', content: prompt }
-                ];
-                const result = await session.sendMessage(prompt, chatHistory);
-                const candidate = result.candidates[0];
-                if (candidate.content.parts) {
-                    aiReply = candidate.content.parts.map(p => p.text).join(' ').trim();
-                } else if (candidate.content.text) {
-                    aiReply = candidate.content.text.trim();
-                }
-            }
-            if (aiReply.toLowerCase().startsWith('no')) {
-                UIController.addMessage('ai', `Information may be insufficient. Suggestion: ${aiReply}`);
-                // Optionally, offer a button to run the suggested query
-                // (UIController.addRefineSearchButton could be implemented)
-            } else {
-                UIController.addMessage('ai', `Information is likely sufficient. (${aiReply})`);
-            }
-        } catch (err) {
-            UIController.addMessage('ai', `Sufficiency check failed. Error: ${err && err.message ? err.message : err}`);
         }
     }
 

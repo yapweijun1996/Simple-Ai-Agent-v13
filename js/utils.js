@@ -1,8 +1,6 @@
 /**
  * ./js/utils.js
  * Utilities Module - Contains encryption/decryption and helper functions
- *
- * Note: This module provides shared utilities for parsing, escaping, and cookie management, and is used by all controllers for consistency.
  */
 const Utils = (function() {
     'use strict';
@@ -290,43 +288,6 @@ const Utils = (function() {
         throw lastError;
     }
 
-    /**
-     * Parses a response string for 'Thinking:' and 'Answer:' sections.
-     * @param {string} response - The response text to parse
-     * @returns {Object} - { thinking, answer, hasStructuredResponse }
-     */
-    function parseThinkingAnswerResponse(response) {
-        const thinkingMatch = response.match(/Thinking:(.*?)(?=Answer:|$)/s);
-        const answerMatch = response.match(/Answer:(.*?)$/s);
-        if (thinkingMatch && answerMatch) {
-            return {
-                thinking: thinkingMatch[1].trim(),
-                answer: answerMatch[1].trim(),
-                hasStructuredResponse: true
-            };
-        } else if (response.startsWith('Thinking:') && !response.includes('Answer:')) {
-            return {
-                thinking: response.replace(/^Thinking:/, '').trim(),
-                answer: '',
-                hasStructuredResponse: true,
-                partial: true,
-                stage: 'thinking'
-            };
-        } else if (response.includes('Thinking:') && !thinkingMatch) {
-            return {
-                thinking: response.replace(/^.*?Thinking:/s, 'Thinking:').replace(/^Thinking:/, '').trim(),
-                answer: '',
-                hasStructuredResponse: false,
-                partial: true
-            };
-        }
-        return {
-            thinking: '',
-            answer: response,
-            hasStructuredResponse: false
-        };
-    }
-
     // Public API
     return {
         decrypt,
@@ -345,7 +306,6 @@ const Utils = (function() {
         escapeHtml,
         fetchWithTimeout,
         fetchWithRetry,
-        fetchWithProxyRetry,
-        parseThinkingAnswerResponse
+        fetchWithProxyRetry
     };
 })(); 
