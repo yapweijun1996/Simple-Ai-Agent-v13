@@ -2,6 +2,8 @@
  * ./js/chat-controller.js
  * Chat Controller Module - Manages chat history and message handling
  * Coordinates between UI and API service for sending/receiving messages
+ *
+ * Note: 'Thinking/Answer' parsing is handled by Utils.parseThinkingAnswerResponse for consistency across modules.
  */
 const ChatController = (function() {
     'use strict';
@@ -227,55 +229,12 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {Object} - Object with thinking and answer components
      */
     function processCoTResponse(response) {
-        console.log("processCoTResponse received:", response);
-        // Check if response follows the Thinking/Answer format
-        const thinkingMatch = response.match(/Thinking:(.*?)(?=Answer:|$)/s);
-        const answerMatch = response.match(/Answer:(.*?)$/s);
-        console.log("processCoTResponse: thinkingMatch", thinkingMatch, "answerMatch", answerMatch);
-        
-        if (thinkingMatch && answerMatch) {
-            const thinking = thinkingMatch[1].trim();
-            const answer = answerMatch[1].trim();
-            
-            // Update the last known content
-            lastThinkingContent = thinking;
-            lastAnswerContent = answer;
-            
-            return {
-                thinking: thinking,
-                answer: answer,
-                hasStructuredResponse: true
-            };
-        } else if (response.startsWith('Thinking:') && !response.includes('Answer:')) {
-            // Partial thinking (no answer yet)
-            const thinking = response.replace(/^Thinking:/, '').trim();
-            lastThinkingContent = thinking;
-            
-            return {
-                thinking: thinking,
-                answer: lastAnswerContent,
-                hasStructuredResponse: true,
-                partial: true,
-                stage: 'thinking'
-            };
-        } else if (response.includes('Thinking:') && !thinkingMatch) {
-            // Malformed response (partial reasoning)
-            const thinking = response.replace(/^.*?Thinking:/s, 'Thinking:');
-            
-            return {
-                thinking: thinking.replace(/^Thinking:/, '').trim(),
-                answer: '',
-                hasStructuredResponse: false,
-                partial: true
-            };
-        }
-        
-        // If not properly formatted, return the whole response as the answer
-        return {
-            thinking: '',
-            answer: response,
-            hasStructuredResponse: false
-        };
+        // Use shared utility for parsing 'Thinking:' and 'Answer:' sections
+        const parsed = Utils.parseThinkingAnswerResponse(response);
+        // Update the last known content if available
+        if (parsed.thinking) lastThinkingContent = parsed.thinking;
+        if (parsed.answer) lastAnswerContent = parsed.answer;
+        return parsed;
     }
     
     /**
@@ -284,39 +243,8 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {Object} - The processed response object
      */
     function processPartialCoTResponse(fullText) {
-        console.log("processPartialCoTResponse received:", fullText);
-        if (fullText.includes('Thinking:') && !fullText.includes('Answer:')) {
-            // Only thinking so far
-            const thinking = fullText.replace(/^.*?Thinking:/s, '').trim();
-            
-            return {
-                thinking: thinking,
-                answer: '',
-                hasStructuredResponse: true,
-                partial: true,
-                stage: 'thinking'
-            };
-        } else if (fullText.includes('Thinking:') && fullText.includes('Answer:')) {
-            // Both thinking and answer are present
-            const thinkingMatch = fullText.match(/Thinking:(.*?)(?=Answer:|$)/s);
-            const answerMatch = fullText.match(/Answer:(.*?)$/s);
-            
-            if (thinkingMatch && answerMatch) {
-                return {
-                    thinking: thinkingMatch[1].trim(),
-                    answer: answerMatch[1].trim(),
-                    hasStructuredResponse: true,
-                    partial: false
-                };
-            }
-        }
-        
-        // Default case - treat as normal text
-        return {
-            thinking: '',
-            answer: fullText,
-            hasStructuredResponse: false
-        };
+        // Use shared utility for parsing partial 'Thinking:' and 'Answer:' sections
+        return Utils.parseThinkingAnswerResponse(fullText);
     }
 
     /**

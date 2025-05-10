@@ -2,6 +2,8 @@
  * ./js/ui-controller.js
  * UI Controller Module - Manages UI elements and interactions
  * Handles chat display, inputs, and visual elements
+ *
+ * Note: 'Thinking/Answer' parsing and HTML escaping are handled by Utils for consistency across modules.
  */
 const UIController = (function() {
     'use strict';
@@ -168,39 +170,16 @@ const UIController = (function() {
      * @returns {string} - HTML formatted text
      */
     function formatTextWithReasoningHighlights(text) {
-        // Escape any HTML first
-        let escapedText = escapeHtml(text);
-        
-        // Replace newlines with <br> tags
-        let formattedText = escapedText.replace(/\n/g, '<br>');
-        
-        // Check for and highlight reasoning patterns
-        if (text.includes('Thinking:') && text.includes('Answer:')) {
-            // Split into thinking and answer sections
-            const thinkingMatch = text.match(/Thinking:(.*?)(?=Answer:|$)/s);
-            const answerMatch = text.match(/Answer:(.*?)$/s);
-            
-            if (thinkingMatch && answerMatch) {
-                const thinkingContent = escapeHtml(thinkingMatch[1].trim());
-                const answerContent = escapeHtml(answerMatch[1].trim());
-                
-                formattedText = `<div class="thinking-section"><strong>Thinking:</strong><br>${thinkingContent.replace(/\n/g, '<br>')}</div>
-                                <div class="answer-section"><strong>Answer:</strong><br>${answerContent.replace(/\n/g, '<br>')}</div>`;
-            }
+        // Use shared utility for parsing 'Thinking:' and 'Answer:' sections
+        const parsed = Utils.parseThinkingAnswerResponse(text);
+        if (parsed.hasStructuredResponse && (parsed.thinking || parsed.answer)) {
+            // Escape HTML for both thinking and answer content
+            const thinkingHtml = Utils.escapeHtml(parsed.thinking || '');
+            const answerHtml = Utils.escapeHtml(parsed.answer || '');
+            return `<div class="thinking-section"><strong>Thinking:</strong><br>${thinkingHtml.replace(/\n/g, '<br>')}</div>\n<div class="answer-section"><strong>Answer:</strong><br>${answerHtml.replace(/\n/g, '<br>')}</div>`;
         }
-        
-        return formattedText;
-    }
-    
-    /**
-     * Safely escapes HTML
-     * @param {string} html - The string to escape
-     * @returns {string} - Escaped HTML string
-     */
-    function escapeHtml(html) {
-        const div = document.createElement('div');
-        div.textContent = html;
-        return div.innerHTML;
+        // Otherwise, escape and replace newlines with <br>
+        return Utils.escapeHtml(text).replace(/\n/g, '<br>');
     }
     
     /**
@@ -237,7 +216,7 @@ const UIController = (function() {
                 }
             } else if (insideCode) {
                 // Inside code block
-                formatted += escapeHtml(line) + '\n';
+                formatted += Utils.escapeHtml(line) + '\n';
             } else {
                 // Regular text
                 currentText += (currentText ? '\n' : '') + line;
