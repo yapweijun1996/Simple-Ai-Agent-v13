@@ -150,12 +150,11 @@ Begin Reasoning Now:
                 const selectedModel = SettingsController.getSettings().selectedModel;
                 let contextMessage = '';
                 if (readSnippets && readSnippets.length) {
-                    // Summarize the snippets before passing to the AI
                     try {
                         UIController.showSpinner('Summarizing retrieved information before answering...');
                         let summary = '';
                         if (selectedModel.startsWith('gpt')) {
-                            const prompt = `Summarize the following information as concisely as possible for later use in answering a question.\n\n${readSnippets.join('\n---\n')}`;
+                            const prompt = `Given the following information retrieved from the web, summarize only the facts and details that are most relevant to answering this question:\n\nQuestion: ${args.query}\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary (in bullet points if possible) that will help answer the question above.`;
                             const res = await ApiService.sendOpenAIRequest(selectedModel, [
                                 { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
                                 { role: 'user', content: prompt }
@@ -163,7 +162,7 @@ Begin Reasoning Now:
                             summary = res.choices[0].message.content.trim();
                         } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
                             const session = ApiService.createGeminiSession(selectedModel);
-                            const prompt = `Summarize the following information as concisely as possible for later use in answering a question.\n\n${readSnippets.join('\n---\n')}`;
+                            const prompt = `Given the following information retrieved from the web, summarize only the facts and details that are most relevant to answering this question:\n\nQuestion: ${args.query}\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary (in bullet points if possible) that will help answer the question above.`;
                             const chatHistory = [
                                 { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
                                 { role: 'user', content: prompt }
@@ -180,11 +179,15 @@ Begin Reasoning Now:
                         contextMessage = `Here is a summary of what I was able to retrieve before the error:\n${summary}\n\n`;
                     } catch (err) {
                         UIController.hideSpinner();
-                        // If summarization fails, fall back to raw snippets
                         contextMessage = `Here is what I was able to retrieve before the error:\n${readSnippets.join('\n---\n')}\n\n`;
                     }
                 }
-                const fallbackPrompt = `${contextMessage}All external tools (web search, etc.) are currently unavailable. You cannot use any tools. Please answer the following question as best as you can, using only the information above and your own knowledge. Do not attempt to call any tools or request more information. Question: ${args.query}`;
+                let urlsMessage = '';
+                if (allSearchUrls && allSearchUrls.size) {
+                    urlsMessage = `You may also find more details at these links:\n${[...allSearchUrls].join('\n')}\n\n`;
+                }
+                const fallbackPrompt =
+`I'm unable to access live web results right now due to technical issues with all search tools.\n\n${contextMessage}${urlsMessage}Based on the information above and my own knowledge, here is my best attempt to answer your question:\n\nQuestion: ${args.query}\n\nIf you need more up-to-date or detailed information, you may want to check the links above directly or try again later.`;
                 if (selectedModel.startsWith('gpt')) {
                     await handleOpenAIMessage(selectedModel, fallbackPrompt);
                 } else {
