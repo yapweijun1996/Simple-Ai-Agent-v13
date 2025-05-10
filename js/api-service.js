@@ -300,4 +300,6 @@ const ApiService = (function() {
         streamGeminiRequest,
         getTokenUsage
     };
-})(); 
+})();
+
+window.ApiService = ApiService; 
