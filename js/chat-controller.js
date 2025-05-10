@@ -137,6 +137,12 @@ Begin Reasoning Now:
         }
     };
 
+    // At the top of the IIFE, add a global error handler:
+    window.addEventListener('error', function(event) {
+        UIController.addMessage('ai', 'An unexpected error occurred: ' + (event.error ? event.error.message : event.message));
+        UIController.clearStatus();
+    });
+
     /**
      * Initializes the chat controller
      * @param {Object} initialSettings - Initial settings for the chat
@@ -394,7 +400,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             }
         } catch (error) {
             console.error('Error sending message:', error);
-            UIController.addMessage('ai', 'Error: ' + error.message);
+            UIController.addMessage('ai', 'An unexpected error occurred. Please try again.');
         } finally {
             // Update token usage display
             Utils.updateTokenDisplay(totalTokens);
