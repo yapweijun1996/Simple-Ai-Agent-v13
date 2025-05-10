@@ -557,18 +557,6 @@ html, body {
     to { opacity: 1; transform: translateY(0); }
 }
 
-body.dark-mode {
-    --primary-color: #4f8cff;
-    --danger-color: #ff5c5c;
-    --text-color: #eaeaea;
-    --text-light-color: #b0b0b0;
-    --bg-color: #181c20;
-    --container-bg: #23272e;
-    --border-color: #2c313a;
-    --user-msg-bg: #223c2e;
-    --ai-msg-bg: #23272e;
-}
-
 body.dark-mode, body.dark-mode .chat-app {
     background: var(--bg-color);
     color: var(--text-color);
@@ -693,4 +681,142 @@ body:not(.light-mode) a {
 }
 body:not(.light-mode) a:hover {
     color: #82cfff;
+}
+
+/* ===================== DARK MODE POLISH ===================== */
+
+/* 1. Use variables for all backgrounds, borders, and text in dark mode */
+body:not(.light-mode) {
+    background: var(--bg-color);
+    color: var(--text-color);
+}
+body:not(.light-mode) .chat-app,
+body:not(.light-mode) .chat-app__window,
+body:not(.light-mode) .settings-modal__content {
+    background: var(--container-bg) !important;
+    color: var(--text-color);
+}
+body:not(.light-mode) .chat-app__window {
+    background: #20232a !important;
+}
+body:not(.light-mode) .chat-app__message.user-message {
+    background: var(--user-msg-bg);
+}
+body:not(.light-mode) .chat-app__message.ai-message {
+    background: var(--ai-msg-bg);
+}
+body:not(.light-mode) .chat-app__controls,
+body:not(.light-mode) .chat-app__header,
+body:not(.light-mode) .chat-app__token-usage {
+    background: var(--container-bg);
+    border-color: var(--border-color);
+}
+body:not(.light-mode) .settings-modal__button {
+    background: var(--container-bg);
+    color: var(--text-color);
+    border-color: var(--border-color);
+}
+body:not(.light-mode) .settings-modal__button--primary {
+    background: var(--primary-color);
+    color: #fff;
+    border-color: var(--primary-color);
+}
+body:not(.light-mode) .chat-app__status-bar {
+    background: linear-gradient(90deg, #23272e 0%, #181c20 100%);
+    color: var(--text-light-color);
+    border-top: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+}
+body:not(.light-mode) .tool-result {
+    background: #23272e;
+    border: 1px solid #4f8cff44;
+}
+body:not(.light-mode) .ai-suggested {
+    border-color: #4f8cff;
+    background: #23272e;
+    box-shadow: 0 0 8px #4f8cff33;
+}
+body:not(.light-mode) .ai-suggested::before {
+    background: #4f8cff;
+}
+
+/* 2. Improve contrast and readability for answer/thinking/code blocks */
+body:not(.light-mode) .answer-section {
+    background-color: #1e2d1e;
+    border-left: 3px solid #4caf80;
+    color: #eaffea;
+}
+body:not(.light-mode) .answer-section strong {
+    color: #4caf80;
+}
+body:not(.light-mode) .thinking-section {
+    background-color: #1e2330;
+    border-left: 3px solid #2196f3;
+    color: #eaf3ff;
+}
+body:not(.light-mode) .thinking-section strong {
+    color: #4faaff;
+}
+body:not(.light-mode) pre, body:not(.light-mode) code {
+    background: #23272e !important;
+    color: #eaffea !important;
+    border-radius: 4px;
+}
+
+/* 3. Timestamps and message shadows for clarity */
+body:not(.light-mode) .chat-app__timestamp {
+    color: #b0b0b0;
+}
+body:not(.light-mode) .chat-app__message {
+    box-shadow: 0 2px 8px #0006;
+}
+
+/* 4. Inputs and buttons: backgrounds, borders, and interactive states */
+body:not(.light-mode) .chat-app__message-input {
+    background: #23272e;
+    color: #eaeaea;
+    border: 1px solid #2c313a;
+}
+body:not(.light-mode) .chat-app__message-input:focus {
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 2px #4f8cff55;
+}
+body:not(.light-mode) .chat-app__send-button {
+    background: #4f8cff;
+    color: #fff;
+    border: 1px solid #4f8cff;
+    box-shadow: 0 2px 8px #4f8cff22;
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+body:not(.light-mode) .chat-app__send-button:hover,
+body:not(.light-mode) .chat-app__send-button:focus {
+    background: #6faaff;
+    border-color: #6faaff;
+    box-shadow: 0 0 8px #4f8cff88;
+}
+
+/* 5. Links: readable and accessible */
+body:not(.light-mode) a {
+    color: #4faaff;
+}
+body:not(.light-mode) a:hover {
+    color: #82cfff;
+}
+
+/* 6. Remove redundant .dark-mode selectors (use only body:not(.light-mode)) */
+body.dark-mode, body.dark-mode .chat-app,
+body.dark-mode .chat-app__window,
+body.dark-mode .chat-app__message.user-message,
+body.dark-mode .chat-app__message.ai-message,
+body.dark-mode .chat-app__controls,
+body.dark-mode .chat-app__header,
+body.dark-mode .chat-app__token-usage,
+body.dark-mode .settings-modal__content,
+body.dark-mode .settings-modal__button,
+body.dark-mode .settings-modal__button--primary,
+body.dark-mode .chat-app__status-bar,
+body.dark-mode .tool-result,
+body.dark-mode .ai-suggested,
+body.dark-mode .ai-suggested::before {
+    /* Remove: replaced by body:not(.light-mode) above */
 } 
