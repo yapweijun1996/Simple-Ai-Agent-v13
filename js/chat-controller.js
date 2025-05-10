@@ -148,10 +148,16 @@ Begin Reasoning Now:
             if (searchFailed || !allResults.length) {
                 UIController.addMessage('ai', 'Web search failed. I will try to answer your question based on the information I already have.');
                 const selectedModel = SettingsController.getSettings().selectedModel;
+                // Synthesize any partial results/snippets as context
+                let contextMessage = '';
+                if (readSnippets && readSnippets.length) {
+                    contextMessage = `Here is what I was able to retrieve before the error:\n${readSnippets.join('\n---\n')}\n\n`;
+                }
+                const fallbackPrompt = `${contextMessage}Please answer the following question as best as you can: ${args.query}`;
                 if (selectedModel.startsWith('gpt')) {
-                    await handleOpenAIMessage(selectedModel, args.query);
+                    await handleOpenAIMessage(selectedModel, fallbackPrompt);
                 } else {
-                    await handleGeminiMessage(selectedModel, args.query);
+                    await handleGeminiMessage(selectedModel, fallbackPrompt);
                 }
                 return;
             }
