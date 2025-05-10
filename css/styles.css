@@ -575,7 +575,7 @@ body.dark-mode, body.dark-mode .chat-app {
 }
 
 body.dark-mode .chat-app__window {
-    background: #20232a;
+    background: #20232a !important;
 }
 
 body.dark-mode .chat-app__message.user-message {
