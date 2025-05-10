@@ -819,4 +819,19 @@ body.dark-mode .tool-result,
 body.dark-mode .ai-suggested,
 body.dark-mode .ai-suggested::before {
     /* Remove: replaced by body:not(.light-mode) above */
+}
+
+/* --- Settings Button: Dark Mode Fix --- */
+body:not(.light-mode) .chat-app__settings-button {
+    background: #23272e;
+    color: #eaeaea;
+    border: 1px solid #4f8cff;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+body:not(.light-mode) .chat-app__settings-button:hover,
+body:not(.light-mode) .chat-app__settings-button:focus {
+    background: #2d3542;
+    color: #fff;
+    border-color: #6faaff;
+    box-shadow: 0 0 0 2px #4f8cff55;
 } 
