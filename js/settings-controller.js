@@ -4,6 +4,7 @@
  * Handles settings modal and persistence of user preferences
  */
 import Utils from './utils.js';
+import ChatController from './chat-controller.js';
 
 const SettingsController = (function() {
     'use strict';
