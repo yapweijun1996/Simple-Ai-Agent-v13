@@ -3,8 +3,6 @@
  * Main Application Module - Entry point for the application
  * Coordinates initialization of all other modules
  */
-import * as ChatState from './chat-state.js';
-
 const App = (function() {
     'use strict';
     

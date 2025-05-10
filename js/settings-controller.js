@@ -3,8 +3,6 @@
  * Settings Controller Module - Manages application settings
  * Handles settings modal and persistence of user preferences
  */
-import * as ChatState from './chat-state.js';
-
 const SettingsController = (function() {
     'use strict';
 
