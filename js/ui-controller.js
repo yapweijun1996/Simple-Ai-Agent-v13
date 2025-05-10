@@ -3,6 +3,8 @@
  * UI Controller Module - Manages UI elements and interactions
  * Handles chat display, inputs, and visual elements
  */
+import Utils from './utils.js';
+
 const UIController = (function() {
     'use strict';
 
