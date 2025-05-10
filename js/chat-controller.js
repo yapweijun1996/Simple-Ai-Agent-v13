@@ -184,7 +184,7 @@ Begin Reasoning Now:
                         contextMessage = `Here is what I was able to retrieve before the error:\n${readSnippets.join('\n---\n')}\n\n`;
                     }
                 }
-                const fallbackPrompt = `${contextMessage}Please answer the following question as best as you can: ${args.query}`;
+                const fallbackPrompt = `${contextMessage}All external tools (web search, etc.) are currently unavailable. You cannot use any tools. Please answer the following question as best as you can, using only the information above and your own knowledge. Do not attempt to call any tools or request more information. Question: ${args.query}`;
                 if (selectedModel.startsWith('gpt')) {
                     await handleOpenAIMessage(selectedModel, fallbackPrompt);
                 } else {
