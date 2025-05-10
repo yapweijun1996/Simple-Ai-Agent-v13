@@ -3,6 +3,8 @@
  * API Service Module - Handles all communication with AI APIs
  * Interfaces with OpenAI and Gemini APIs and manages API keys
  */
+import Utils from './utils.js';
+
 const ApiService = (function() {
     'use strict';
 
