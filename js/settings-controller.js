@@ -3,6 +3,8 @@
  * Settings Controller Module - Manages application settings
  * Handles settings modal and persistence of user preferences
  */
+import Utils from './utils.js';
+
 const SettingsController = (function() {
     'use strict';
 
