@@ -308,6 +308,4 @@ const Utils = (function() {
         fetchWithRetry,
         fetchWithProxyRetry
     };
-})();
-
-export default Utils; 
+})(); 

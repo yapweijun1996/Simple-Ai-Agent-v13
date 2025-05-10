@@ -3,12 +3,6 @@
  * Chat Controller Module - Manages chat history and message handling
  * Coordinates between UI and API service for sending/receiving messages
  */
-import { handleUserMessage } from './agent/agent-core.js';
-import UIController from './ui-controller.js';
-import SettingsController from './settings-controller.js';
-import Utils from './utils.js';
-import ApiService from './api-service.js';
-
 const ChatController = (function() {
     'use strict';
 
@@ -33,7 +27,6 @@ const ChatController = (function() {
     let originalUserQuestion = '';
     // Add a flag to control tool workflow
     let toolWorkflowActive = true;
-    let allSearchUrls = new Set();
 
     // Add helper to robustly extract JSON tool calls (handles markdown fences)
     function extractToolCall(text) {
@@ -59,181 +52,42 @@ const ChatController = (function() {
 Begin Reasoning Now:
 `;
 
-    // Helper: Assess search result quality using AI
-    async function assessSearchQuality(results, userQuery) {
-        const prompt = `Given these search results for the query: "${userQuery}", are they relevant and likely to answer the question? Reply YES or NO and a brief reason.\n\n${results.map((r, i) => `${i+1}. ${r.title} - ${r.snippet}`).join('\n')}`;
-        const selectedModel = SettingsController.getSettings().selectedModel;
-        let aiReply = '';
-        if (selectedModel.startsWith('gpt')) {
-            const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                { role: 'system', content: 'You are an assistant that assesses search result quality.' },
-                { role: 'user', content: prompt }
-            ]);
-            aiReply = res.choices[0].message.content.trim().toLowerCase();
-        }
-        return aiReply.startsWith('yes');
-    }
-
-    // Helper: Get a refined query from AI
-    async function getRefinedQuery(results, userQuery) {
-        const prompt = `The search results for "${userQuery}" were not relevant. Suggest a better search query to find more relevant information.`;
-        const selectedModel = SettingsController.getSettings().selectedModel;
-        let aiReply = '';
-        if (selectedModel.startsWith('gpt')) {
-            const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                { role: 'system', content: 'You are an assistant that helps refine search queries.' },
-                { role: 'user', content: prompt }
-            ]);
-            aiReply = res.choices[0].message.content.trim();
-        }
-        return aiReply;
-    }
-
     // Tool handler registry
     const toolHandlers = {
         web_search: async function(args) {
-            let query = args.query;
-            console.log('[web_search] Initial query:', query);
-            if (!query || typeof query !== 'string' || !query.trim()) {
-                // Try to recover: use originalUserQuestion or last user message
-                console.log('[web_search] Attempting to recover query. originalUserQuestion:', originalUserQuestion);
-                if (typeof originalUserQuestion === 'string' && originalUserQuestion.trim()) {
-                    query = originalUserQuestion;
-                    console.log('[web_search] Recovered query from originalUserQuestion:', query);
-                } else if (chatHistory && chatHistory.length) {
-                    // Find last user message
-                    for (let i = chatHistory.length - 1; i >= 0; i--) {
-                        if (chatHistory[i].role === 'user' && chatHistory[i].content && chatHistory[i].content.trim()) {
-                            query = chatHistory[i].content;
-                            console.log('[web_search] Recovered query from chatHistory:', query);
-                            break;
-                        }
-                    }
-                }
-            }
-            if (!query || typeof query !== 'string' || !query.trim()) {
-                console.warn('[web_search] Could not recover a valid query. Aborting web search. Args:', args);
-                UIController.addMessage('ai', 'Error: No valid search query could be determined. Please rephrase your question.');
+            if (!args.query || typeof args.query !== 'string' || !args.query.trim()) {
+                UIController.addMessage('ai', 'Error: Invalid web_search query.');
                 return;
             }
             const engine = args.engine || 'duckduckgo';
+            UIController.showSpinner(`Searching (${engine}) for "${args.query}"...`);
+            UIController.showStatus(`Searching (${engine}) for "${args.query}"...`);
             let results = [];
-            let retries = 0;
-            const maxRetries = 2;
-            let allResults = [];
-            allSearchUrls = new Set(); // Reset for this search session
-            let searchFailed = false;
-
-            while (retries <= maxRetries) {
-                UIController.showSpinner(`Searching (${engine}) for "${query}"...`);
-                UIController.showStatus(`Searching (${engine}) for "${query}"...`);
-                try {
-                    results = await ToolsService.webSearch(query, (result) => {
-                        if (result.url) allSearchUrls.add(result.url);
-                        UIController.addSearchResult(result, (url) => {
-                            processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
-                        });
-                    }, engine);
-                } catch (err) {
-                    UIController.addMessage('ai', `Web search failed for "${query}": ${err.message || err}`);
-                    searchFailed = true;
-                    break;
-                }
-
-                allResults = allResults.concat(results);
-
+            try {
+                const streamed = [];
+                results = await ToolsService.webSearch(args.query, (result) => {
+                    streamed.push(result);
+                    // Pass highlight flag if this index is in highlightedResultIndices
+                    const idx = streamed.length - 1;
+                    UIController.addSearchResult(result, (url) => {
+                        processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
+                    }, highlightedResultIndices.has(idx));
+                }, engine);
                 if (!results.length) {
-                    UIController.addMessage('ai', `No search results found for "${query}".`);
-                    break;
+                    UIController.addMessage('ai', `No search results found for "${args.query}".`);
                 }
-
-                // Assess quality
-                const isGood = await assessSearchQuality(results, query);
-                if (isGood) {
-                    break;
-                } else if (retries < maxRetries) {
-                    query = await getRefinedQuery(results, query);
-                    retries++;
-                    continue;
-                } else {
-                    UIController.addMessage('ai', `Search results for "${args.query}" were not relevant after ${maxRetries+1} attempts.`);
-                    break;
-                }
+                const plainTextResults = results.map((r, i) => `${i+1}. ${r.title} (${r.url}) - ${r.snippet}`).join('\n');
+                chatHistory.push({ role: 'assistant', content: `Search results for "${args.query}" (${results.length}):\n${plainTextResults}` });
+                lastSearchResults = results;
+                // Prompt AI to suggest which results to read
+                await suggestResultsToRead(results, args.query);
+            } catch (err) {
+                UIController.hideSpinner();
+                UIController.addMessage('ai', `Web search failed: ${err.message}`);
+                chatHistory.push({ role: 'assistant', content: `Web search failed: ${err.message}` });
             }
-
-            if (allSearchUrls.size > 0) {
-                UIController.addMessage('ai', `Collected the following URLs for further reading:\n${[...allSearchUrls].join('\n')}`);
-            }
-
-            lastSearchResults = allResults;
             UIController.hideSpinner();
             UIController.clearStatus();
-
-            // Fallback: If search failed, let the AI try to answer with what it knows
-            if (searchFailed || !allResults.length) {
-                UIController.addMessage('ai', 'Web search failed. I will try to answer your question based on the information I already have.');
-                const selectedModel = SettingsController.getSettings().selectedModel;
-                let contextMessage = '';
-                let snippetsToSummarize = [];
-                if (readSnippets && readSnippets.length) {
-                    snippetsToSummarize = readSnippets;
-                    console.log('[web_search] Using readSnippets for summarization:', readSnippets);
-                } else if (allResults && allResults.length) {
-                    // Use snippets from search results if readSnippets is empty
-                    snippetsToSummarize = allResults.map(r => r.snippet).filter(Boolean);
-                    console.log('[web_search] Using allResults snippets for summarization:', snippetsToSummarize);
-                } else {
-                    console.log('[web_search] No snippets available for summarization.');
-                }
-                if (snippetsToSummarize.length) {
-                    try {
-                        UIController.showSpinner('Summarizing retrieved information before answering...');
-                        let summary = '';
-                        const userQuestion = query;
-                        if (selectedModel.startsWith('gpt')) {
-                            const prompt = `Given the following information retrieved from the web, extract and summarize all facts and details that are most relevant to answering this question. Present the information concisely, preferably in bullet points or a table if appropriate.\n\nQuestion: ${userQuestion}\n\nInformation:\n${snippetsToSummarize.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary that will help answer the question above.`;
-                            const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                                { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
-                                { role: 'user', content: prompt }
-                            ]);
-                            summary = res.choices[0].message.content.trim();
-                        } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
-                            const session = ApiService.createGeminiSession(selectedModel);
-                            const prompt = `Given the following information retrieved from the web, extract and summarize all facts and details that are most relevant to answering this question. Present the information concisely, preferably in bullet points or a table if appropriate.\n\nQuestion: ${userQuestion}\n\nInformation:\n${snippetsToSummarize.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary that will help answer the question above.`;
-                            const chatHistory = [
-                                { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
-                                { role: 'user', content: prompt }
-                            ];
-                            const result = await session.sendMessage(prompt, chatHistory);
-                            const candidate = result.candidates[0];
-                            if (candidate.content.parts) {
-                                summary = candidate.content.parts.map(p => p.text).join(' ').trim();
-                            } else if (candidate.content.text) {
-                                summary = candidate.content.text.trim();
-                            }
-                        }
-                        UIController.hideSpinner();
-                        contextMessage = `Here is a summary of what I was able to retrieve before the error:\n${summary}\n\n`;
-                    } catch (err) {
-                        UIController.hideSpinner();
-                        contextMessage = `Here is what I was able to retrieve before the error:\n${snippetsToSummarize.join('\n---\n')}\n\n`;
-                    }
-                }
-                let urlsMessage = '';
-                if (allSearchUrls && allSearchUrls.size) {
-                    urlsMessage = `You may also find more details at these links:\n${[...allSearchUrls].join('\n')}\n\n`;
-                }
-                const fallbackPrompt =
-`I'm unable to access live web results right now due to technical issues with all search tools.\n\n${contextMessage}${urlsMessage}Based on the information above and my own knowledge, here is my best attempt to answer your question:\n\nQuestion: ${query}\n\nPlease answer the user's question using the summary above. If you cannot find the answer, say so. If you need more up-to-date or detailed information, you may want to check the links above directly or try again later.`;
-                if (selectedModel.startsWith('gpt')) {
-                    await handleOpenAIMessage(selectedModel, fallbackPrompt);
-                } else {
-                    await handleGeminiMessage(selectedModel, fallbackPrompt);
-                }
-                return;
-            }
-
-            await suggestResultsToRead(allResults, query);
         },
         read_url: async function(args) {
             if (!args.url || typeof args.url !== 'string' || !/^https?:\/\//.test(args.url)) {
@@ -498,41 +352,39 @@ Answer: [your final, concise answer based on the reasoning above]`;
         if (!message) return;
         originalUserQuestion = message;
         toolWorkflowActive = true;
-
+        
         // Show status and disable inputs while awaiting AI
         UIController.showStatus('Sending message...');
         document.getElementById('message-input').disabled = true;
         document.getElementById('send-button').disabled = true;
-
+        
         // Reset the partial response tracking
         lastThinkingContent = '';
         lastAnswerContent = '';
-
+        
         // Add user message to UI
         UIController.addMessage('user', message);
         UIController.clearUserInput();
-
-        // Get the selected model and settings
+        
+        // Apply CoT formatting if enabled
+        const enhancedMessage = settings.enableCoT ? enhanceWithCoT(message) : message;
+        
+        // Get the selected model from SettingsController
         const currentSettings = SettingsController.getSettings();
-        const state = { chatHistory, currentModel: currentSettings.selectedModel };
+        const selectedModel = currentSettings.selectedModel;
+        
         try {
-            // Use the new agent-core workflow
-            const result = await handleUserMessage(message, currentSettings, state);
-            // Show reasoning steps if enabled
-            if (currentSettings.showThinking && result.reasoningSteps) {
-                result.reasoningSteps.forEach(step => {
-                    if (step.type === 'model') {
-                        UIController.addMessage('ai', `[Model: ${step.model}]\n${step.output}`);
-                    } else if (step.type === 'tool') {
-                        UIController.addMessage('ai', `[Tool: ${step.tool}]\nArgs: ${JSON.stringify(step.args)}\nResult: ${JSON.stringify(step.result)}`);
-                    } else if (step.type === 'error') {
-                        UIController.addMessage('ai', `Error: ${step.message}`);
-                    }
-                });
-            }
-            // Show final answer
-            if (result.finalAnswer) {
-                UIController.addMessage('ai', result.finalAnswer);
+            if (selectedModel.startsWith('gpt')) {
+                // For OpenAI, add enhanced message to chat history before sending to include the CoT prompt.
+                chatHistory.push({ role: 'user', content: enhancedMessage });
+                console.log("Sent enhanced message to GPT:", enhancedMessage);
+                await handleOpenAIMessage(selectedModel, enhancedMessage);
+            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
+                // For Gemini, ensure chat history starts with user message if empty
+                if (chatHistory.length === 0) {
+                    chatHistory.push({ role: 'user', content: '' });
+                }
+                await handleGeminiMessage(selectedModel, enhancedMessage);
             }
         } catch (error) {
             console.error('Error sending message:', error);
@@ -819,19 +671,8 @@ Answer: [your final, concise answer based on the reasoning above]`;
 
     // Enhanced processToolCall using registry and validation
     async function processToolCall(call) {
-        // Debug log for all tool calls
-        console.log('processToolCall:', call);
         if (!toolWorkflowActive) return;
         const { tool, arguments: args, skipContinue } = call;
-        // Guard: If web_search and query is missing/empty, do not proceed
-        if (tool === 'web_search') {
-            let q = args && args.query;
-            if (!q || typeof q !== 'string' || !q.trim()) {
-                console.warn('processToolCall: web_search called with empty query. Skipping tool call. Call:', call);
-                UIController.addMessage('ai', 'Error: Web search tool was called with an empty query. Please rephrase your question.');
-                return;
-            }
-        }
         // Tool call loop protection
         const callSignature = JSON.stringify({ tool, args });
         if (lastToolCall === callSignature) {
@@ -861,17 +702,10 @@ Answer: [your final, concise answer based on the reasoning above]`;
             }
             if (!isToolCall) {
                 const selectedModel = SettingsController.getSettings().selectedModel;
-                // Use the last user question if message is empty
-                let nextMessage = originalUserQuestion;
-                if (!nextMessage) {
-                    // Fallback: try to get the last user message from chatHistory
-                    const lastUser = [...chatHistory].reverse().find(m => m.role === 'user');
-                    nextMessage = lastUser ? lastUser.content : '';
-                }
                 if (selectedModel.startsWith('gpt')) {
-                    await handleOpenAIMessage(selectedModel, nextMessage);
+                    await handleOpenAIMessage(selectedModel, '');
                 } else {
-                    await handleGeminiMessage(selectedModel, nextMessage);
+                    await handleGeminiMessage(selectedModel, '');
                 }
             } else {
                 UIController.addMessage('ai', 'Warning: AI outputted another tool call without reasoning. Stopping to prevent infinite loop.');
@@ -1187,6 +1021,4 @@ Answer: [your final, concise answer based on the reasoning above]`;
         processToolCall,
         getToolCallHistory: () => [...toolCallHistory],
     };
-})();
-
-export default ChatController; 
+})(); 
