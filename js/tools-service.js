@@ -35,6 +35,21 @@ const ToolsService = (function() {
     // Proxy health tracking
     const proxyHealth = new Map(proxies.map(p => [p.name, 1]));
 
+    // Add at the top of the file:
+    window.proxyFailureLog = window.proxyFailureLog || [];
+    function logProxyFailure({proxyUrl, error, query, model}) {
+        window.proxyFailureLog.push({
+            proxyUrl,
+            error: error && error.message ? error.message : String(error),
+            query,
+            model,
+            timestamp: new Date().toISOString()
+        });
+    }
+    window.exportProxyFailureLog = function() {
+        return JSON.stringify(window.proxyFailureLog, null, 2);
+    };
+
     function getFinalUrl(rawUrl) {
       try {
         const parsed = new URL(rawUrl);
@@ -128,6 +143,12 @@ const ToolsService = (function() {
           proxyHealth.set(proxy.name, (proxyHealth.get(proxy.name) || 1) + 2); // reward
           return results;
         } catch (err) {
+          logProxyFailure({
+            proxyUrl: proxy.formatUrl(searchUrl),
+            error: err,
+            query,
+            model: engine
+          });
           proxyHealth.set(proxy.name, (proxyHealth.get(proxy.name) || 1) - 2); // penalize
           if (partialResults.length) {
             if (onResult) partialResults.forEach(r => onResult(r));
@@ -165,6 +186,12 @@ const ToolsService = (function() {
           const resultText = texts.join('\n\n').trim();
           return resultText;
         } catch (err) {
+          logProxyFailure({
+            proxyUrl: proxy.formatUrl(url),
+            error: err,
+            query: url,
+            model: proxy.name
+          });
           console.warn(`Proxy ${proxy.name} failed: ${err.message}`);
         }
       }
