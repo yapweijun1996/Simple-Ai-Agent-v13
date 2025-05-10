@@ -3,9 +3,16 @@
  * Chat Controller Module - Manages chat history and message handling
  * Coordinates between UI and API service for sending/receiving messages
  */
-import { toolHandlers } from './tool-handlers.js';
+import { createToolHandlers } from './tool-handlers.js';
 import { extractToolCall, splitIntoBatches } from './utils.js';
-import * as ChatState from './chat-state.js';
+import {
+    getChatHistory, setChatHistory, addChatMessage,
+    getTotalTokens, setTotalTokens, incrementTotalTokens,
+    getSettings, setSettings
+} from './chat-state.js';
+import { summarizeSnippets, synthesizeFinalAnswer } from './chat-summarization.js';
+import { UIController } from './ui-controller.js';
+import { ToolsService } from './tools-service.js';
 
 const ChatController = (function() {
     'use strict';
@@ -47,7 +54,7 @@ Begin Reasoning Now:
      */
     function init(initialSettings) {
         // Reset and seed chatHistory with system tool instructions
-        ChatState.chatHistory = [{
+        setChatHistory([{
             role: 'system',
             content: `You are an AI assistant with access to three external tools. You MUST use these tools to answer any question that requires up-to-date facts, statistics, or detailed content. Do NOT attempt to answer such questions from your own knowledge. The tools are:
 
@@ -78,13 +85,16 @@ Q: What is the capital of France?
 A: {"tool":"instant_answer","arguments":{"query":"capital of France"}}
 
 If you understand, follow these instructions for every relevant question. Do NOT answer from your own knowledge if a tool call is needed. Wait for the tool result before continuing.`,
-        }];
+        }]);
         if (initialSettings) {
-            ChatState.settings = { ...ChatState.settings, ...initialSettings };
+            setSettings({ ...getSettings(), ...initialSettings });
         }
         
         // Set up event handlers through UI controller
         UIController.setupEventHandlers(sendMessage, clearChat);
+
+        // Create toolHandlers with dependencies
+        const toolHandlers = createToolHandlers({ UIController, ToolsService, processToolCall });
     }
 
     /**
@@ -92,16 +102,16 @@ If you understand, follow these instructions for every relevant question. Do NOT
      * @param {Object} newSettings - The new settings
      */
     function updateSettings(newSettings) {
-        ChatState.settings = { ...ChatState.settings, ...newSettings };
-        console.log('Chat settings updated:', ChatState.settings);
+        setSettings({ ...getSettings(), ...newSettings });
+        console.log('Chat settings updated:', getSettings());
     }
 
     /**
      * Clears the chat history and resets token count
      */
     function clearChat() {
-        ChatState.chatHistory = [];
-        ChatState.totalTokens = 0;
+        setChatHistory([]);
+        setTotalTokens(0);
         Utils.updateTokenDisplay(0);
     }
 
@@ -110,7 +120,7 @@ If you understand, follow these instructions for every relevant question. Do NOT
      * @returns {Object} - The current settings
      */
     function getSettings() {
-        return { ...ChatState.settings };
+        return getSettings();
     }
 
     /**
@@ -228,12 +238,12 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {string} - The formatted response for display
      */
     function formatResponseForDisplay(processed) {
-        if (!ChatState.settings.enableCoT || !processed.hasStructuredResponse) {
+        if (!getSettings().enableCoT || !processed.hasStructuredResponse) {
             return processed.answer;
         }
 
         // If showThinking is enabled, show both thinking and answer
-        if (ChatState.settings.showThinking) {
+        if (getSettings().showThinking) {
             if (processed.partial && processed.stage === 'thinking') {
                 return `Thinking: ${processed.thinking}`;
             } else if (processed.partial) {
@@ -270,7 +280,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
         UIController.clearUserInput();
         
         // Apply CoT formatting if enabled
-        const enhancedMessage = ChatState.settings.enableCoT ? enhanceWithCoT(message) : message;
+        const enhancedMessage = getSettings().enableCoT ? enhanceWithCoT(message) : message;
         
         // Get the selected model from SettingsController
         const currentSettings = SettingsController.getSettings();
@@ -279,13 +289,13 @@ Answer: [your final, concise answer based on the reasoning above]`;
         try {
             if (selectedModel.startsWith('gpt')) {
                 // For OpenAI, add enhanced message to chat history before sending to include the CoT prompt.
-                ChatState.chatHistory.push({ role: 'user', content: enhancedMessage });
+                addChatMessage({ role: 'user', content: enhancedMessage });
                 console.log("Sent enhanced message to GPT:", enhancedMessage);
                 await handleOpenAIMessage(selectedModel, enhancedMessage);
             } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
                 // For Gemini, ensure chat history starts with user message if empty
-                if (ChatState.chatHistory.length === 0) {
-                    ChatState.chatHistory.push({ role: 'user', content: '' });
+                if (getChatHistory().length === 0) {
+                    addChatMessage({ role: 'user', content: '' });
                 }
                 await handleGeminiMessage(selectedModel, enhancedMessage);
             }
@@ -294,7 +304,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             UIController.addMessage('ai', 'Error: ' + error.message);
         } finally {
             // Update token usage display
-            Utils.updateTokenDisplay(ChatState.totalTokens);
+            Utils.updateTokenDisplay(getTotalTokens());
             // Clear status and re-enable inputs
             UIController.clearStatus();
             document.getElementById('message-input').disabled = false;
@@ -308,7 +318,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @param {string} message - The user message
      */
     async function handleOpenAIMessage(model, message) {
-        if (ChatState.settings.streaming) {
+        if (getSettings().streaming) {
             // Show status for streaming response
             UIController.showStatus('Streaming response...');
             // Streaming approach
@@ -317,7 +327,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             
             try {
                 // Start thinking indicator if CoT is enabled
-                if (ChatState.settings.enableCoT) {
+                if (getSettings().enableCoT) {
                     isThinking = true;
                     UIController.updateMessageContent(aiMsgElement, '🤔 Thinking...');
                 }
@@ -325,11 +335,11 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Process streaming response
                 const fullReply = await ApiService.streamOpenAIRequest(
                     model, 
-                    ChatState.chatHistory,
+                    getChatHistory(),
                     (chunk, fullText) => {
                         streamedResponse = fullText;
                         
-                        if (ChatState.settings.enableCoT) {
+                        if (getSettings().enableCoT) {
                             // Process the streamed response for CoT
                             const processed = processPartialCoTResponse(fullText);
                             
@@ -355,7 +365,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 }
                 
                 // Process response for CoT if enabled
-                if (ChatState.settings.enableCoT) {
+                if (getSettings().enableCoT) {
                     const processed = processCoTResponse(fullReply);
                     
                     // Add thinking to debug console if available
@@ -368,16 +378,16 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     UIController.updateMessageContent(aiMsgElement, displayText);
                     
                     // Add full response to chat history
-                    ChatState.chatHistory.push({ role: 'assistant', content: fullReply });
+                    addChatMessage({ role: 'assistant', content: fullReply });
                 } else {
                     // Add to chat history after completed
-                    ChatState.chatHistory.push({ role: 'assistant', content: fullReply });
+                    addChatMessage({ role: 'assistant', content: fullReply });
                 }
                 
                 // Get token usage
-                const tokenCount = await ApiService.getTokenUsage(model, ChatState.chatHistory);
+                const tokenCount = await ApiService.getTokenUsage(model, getChatHistory());
                 if (tokenCount) {
-                    ChatState.totalTokens += tokenCount;
+                    setTotalTokens(getTotalTokens() + tokenCount);
                 }
             } catch (err) {
                 UIController.updateMessageContent(aiMsgElement, 'Error: ' + err.message);
@@ -390,7 +400,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             UIController.showStatus('Waiting for AI response...');
             // Non-streaming approach
             try {
-                const result = await ApiService.sendOpenAIRequest(model, ChatState.chatHistory);
+                const result = await ApiService.sendOpenAIRequest(model, getChatHistory());
                 
                 if (result.error) {
                     throw new Error(result.error.message);
@@ -398,7 +408,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 
                 // Update token usage
                 if (result.usage && result.usage.total_tokens) {
-                    ChatState.totalTokens += result.usage.total_tokens;
+                    setTotalTokens(getTotalTokens() + result.usage.total_tokens);
                 }
                 
                 // Process response
@@ -412,7 +422,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     return;
                 }
                 
-                if (ChatState.settings.enableCoT) {
+                if (getSettings().enableCoT) {
                     const processed = processCoTResponse(reply);
                     
                     // Add thinking to debug console if available
@@ -421,13 +431,13 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     }
                     
                     // Add the full response to chat history
-                    ChatState.chatHistory.push({ role: 'assistant', content: reply });
+                    addChatMessage({ role: 'assistant', content: reply });
                     
                     // Show appropriate content in the UI based on settings
                     const displayText = formatResponseForDisplay(processed);
                     UIController.addMessage('ai', displayText);
                 } else {
-                    ChatState.chatHistory.push({ role: 'assistant', content: reply });
+                    addChatMessage({ role: 'assistant', content: reply });
                     UIController.addMessage('ai', reply);
                 }
             } catch (err) {
@@ -443,16 +453,16 @@ Answer: [your final, concise answer based on the reasoning above]`;
      */
     async function handleGeminiMessage(model, message) {
         // Add current message to chat history
-        ChatState.chatHistory.push({ role: 'user', content: message });
+        addChatMessage({ role: 'user', content: message });
         
-        if (ChatState.settings.streaming) {
+        if (getSettings().streaming) {
             // Streaming approach
             const aiMsgElement = UIController.createEmptyAIMessage();
             let streamedResponse = '';
             
             try {
                 // Start thinking indicator if CoT is enabled
-                if (ChatState.settings.enableCoT) {
+                if (getSettings().enableCoT) {
                     isThinking = true;
                     UIController.updateMessageContent(aiMsgElement, '🤔 Thinking...');
                 }
@@ -460,11 +470,11 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Process streaming response
                 const fullReply = await ApiService.streamGeminiRequest(
                     model,
-                    ChatState.chatHistory,
+                    getChatHistory(),
                     (chunk, fullText) => {
                         streamedResponse = fullText;
                         
-                        if (ChatState.settings.enableCoT) {
+                        if (getSettings().enableCoT) {
                             // Process the streamed response for CoT
                             const processed = processPartialCoTResponse(fullText);
                             
@@ -490,7 +500,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 }
                 
                 // Process response for CoT if enabled
-                if (ChatState.settings.enableCoT) {
+                if (getSettings().enableCoT) {
                     const processed = processCoTResponse(fullReply);
                     
                     // Add thinking to debug console if available
@@ -503,16 +513,16 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     UIController.updateMessageContent(aiMsgElement, displayText);
                     
                     // Add full response to chat history
-                    ChatState.chatHistory.push({ role: 'assistant', content: fullReply });
+                    addChatMessage({ role: 'assistant', content: fullReply });
                 } else {
                     // Add to chat history after completed
-                    ChatState.chatHistory.push({ role: 'assistant', content: fullReply });
+                    addChatMessage({ role: 'assistant', content: fullReply });
                 }
                 
                 // Get token usage
-                const tokenCount = await ApiService.getTokenUsage(model, ChatState.chatHistory);
+                const tokenCount = await ApiService.getTokenUsage(model, getChatHistory());
                 if (tokenCount) {
-                    ChatState.totalTokens += tokenCount;
+                    setTotalTokens(getTotalTokens() + tokenCount);
                 }
             } catch (err) {
                 UIController.updateMessageContent(aiMsgElement, 'Error: ' + err.message);
@@ -524,11 +534,11 @@ Answer: [your final, concise answer based on the reasoning above]`;
             // Non-streaming approach
             try {
                 const session = ApiService.createGeminiSession(model);
-                const result = await session.sendMessage(message, ChatState.chatHistory);
+                const result = await session.sendMessage(message, getChatHistory());
                 
                 // Update token usage if available
                 if (result.usageMetadata && typeof result.usageMetadata.totalTokenCount === 'number') {
-                    ChatState.totalTokens += result.usageMetadata.totalTokenCount;
+                    setTotalTokens(getTotalTokens() + result.usageMetadata.totalTokenCount);
                 }
                 
                 // Process response
@@ -548,7 +558,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     return;
                 }
                 
-                if (ChatState.settings.enableCoT) {
+                if (getSettings().enableCoT) {
                     const processed = processCoTResponse(textResponse);
                     
                     // Add thinking to debug console if available
@@ -557,13 +567,13 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     }
                     
                     // Add the full response to chat history
-                    ChatState.chatHistory.push({ role: 'assistant', content: textResponse });
+                    addChatMessage({ role: 'assistant', content: textResponse });
                     
                     // Show appropriate content in the UI based on settings
                     const displayText = formatResponseForDisplay(processed);
                     UIController.addMessage('ai', displayText);
                 } else {
-                    ChatState.chatHistory.push({ role: 'assistant', content: textResponse });
+                    addChatMessage({ role: 'assistant', content: textResponse });
                     UIController.addMessage('ai', textResponse);
                 }
             } catch (err) {
@@ -593,7 +603,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
         await toolHandlers[tool](args);
         // Only continue reasoning if the last AI reply was NOT a tool call
         if (!skipContinue) {
-            const lastEntry = ChatState.chatHistory[ChatState.chatHistory.length - 1];
+            const lastEntry = getChatHistory()[getChatHistory().length - 1];
             let isToolCall = false;
             if (lastEntry && typeof lastEntry.content === 'string') {
                 try {
@@ -621,7 +631,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {Array} - The chat history
      */
     function getChatHistory() {
-        return [...ChatState.chatHistory];
+        return [...getChatHistory()];
     }
 
     /**
@@ -629,7 +639,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {number} - The total tokens used
      */
     function getTotalTokens() {
-        return ChatState.totalTokens;
+        return getTotalTokens();
     }
 
     // Helper: AI-driven deep reading for a URL
@@ -648,7 +658,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             } else {
                 await processToolCall({ tool: 'read_url', arguments: { url, start, length: chunkSize }, skipContinue: true });
                 // Find the last snippet added to chatHistory
-                const lastEntry = ChatState.chatHistory[ChatState.chatHistory.length - 1];
+                const lastEntry = getChatHistory()[getChatHistory().length - 1];
                 if (lastEntry && typeof lastEntry.content === 'string' && lastEntry.content.startsWith('Read content from')) {
                     snippet = lastEntry.content.split('\n').slice(1).join('\n');
                     readCache.set(cacheKey, snippet);
@@ -709,7 +719,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 await deepReadUrl(url, 5, 2000);
             }
             // After all reads, auto-summarize
-            await summarizeSnippets();
+            await summarizeSnippets(readSnippets);
         } finally {
             autoReadInProgress = false;
         }
@@ -750,145 +760,6 @@ Answer: [your final, concise answer based on the reasoning above]`;
             }
         } catch (err) {
             // Ignore suggestion errors
-        }
-    }
-
-    // Summarization logic (recursive, context-aware)
-    async function summarizeSnippets(snippets = null, round = 1) {
-        if (!snippets) snippets = readSnippets;
-        if (!snippets.length) return;
-        const selectedModel = SettingsController.getSettings().selectedModel;
-        const MAX_PROMPT_LENGTH = 5857; // chars, safe for most models
-        const SUMMARIZATION_TIMEOUT = 88000; // 88 seconds
-        // If only one snippet, just summarize it directly
-        if (snippets.length === 1) {
-            const prompt = `Summarize the following information extracted from web pages (be as concise as possible):\n\n${snippets[0]}`;
-            let aiReply = '';
-            UIController.showSpinner(`Round ${round}: Summarizing information...`);
-            UIController.showStatus(`Round ${round}: Summarizing information...`);
-            try {
-                if (selectedModel.startsWith('gpt')) {
-                    const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                        { role: 'system', content: 'You are an assistant that synthesizes information from multiple sources.' },
-                        { role: 'user', content: prompt }
-                    ], SUMMARIZATION_TIMEOUT);
-                    aiReply = res.choices[0].message.content.trim();
-                } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
-                    const session = ApiService.createGeminiSession(selectedModel);
-                    const chatHistory = [
-                        { role: 'system', content: 'You are an assistant that synthesizes information from multiple sources.' },
-                        { role: 'user', content: prompt }
-                    ];
-                    const result = await session.sendMessage(prompt, chatHistory);
-                    const candidate = result.candidates[0];
-                    if (candidate.content.parts) {
-                        aiReply = candidate.content.parts.map(p => p.text).join(' ').trim();
-                    } else if (candidate.content.text) {
-                        aiReply = candidate.content.text.trim();
-                    }
-                }
-                if (aiReply) {
-                    UIController.addMessage('ai', `Summary:\n${aiReply}`);
-                }
-            } catch (err) {
-                UIController.addMessage('ai', `Summarization failed. Error: ${err && err.message ? err.message : err}`);
-            }
-            UIController.hideSpinner();
-            UIController.clearStatus();
-            readSnippets = [];
-            // Prompt for final answer after summary
-            await synthesizeFinalAnswer(aiReply);
-            return;
-        }
-        // Otherwise, split into batches
-        const batches = splitIntoBatches(snippets, MAX_PROMPT_LENGTH);
-        let batchSummaries = [];
-        const totalBatches = batches.length;
-        try {
-            for (let i = 0; i < totalBatches; i++) {
-                const batch = batches[i];
-                UIController.showSpinner(`Round ${round}: Summarizing batch ${i + 1} of ${totalBatches}...`);
-                UIController.showStatus(`Round ${round}: Summarizing batch ${i + 1} of ${totalBatches}...`);
-                const batchPrompt = `Summarize the following information extracted from web pages (be as concise as possible):\n\n${batch.join('\n---\n')}`;
-                let batchReply = '';
-                if (selectedModel.startsWith('gpt')) {
-                    const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                        { role: 'system', content: 'You are an assistant that synthesizes information from multiple sources.' },
-                        { role: 'user', content: batchPrompt }
-                    ], SUMMARIZATION_TIMEOUT);
-                    batchReply = res.choices[0].message.content.trim();
-                } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
-                    const session = ApiService.createGeminiSession(selectedModel);
-                    const chatHistory = [
-                        { role: 'system', content: 'You are an assistant that synthesizes information from multiple sources.' },
-                        { role: 'user', content: batchPrompt }
-                    ];
-                    const result = await session.sendMessage(batchPrompt, chatHistory);
-                    const candidate = result.candidates[0];
-                    if (candidate.content.parts) {
-                        batchReply = candidate.content.parts.map(p => p.text).join(' ').trim();
-                    } else if (candidate.content.text) {
-                        batchReply = candidate.content.text.trim();
-                    }
-                }
-                batchSummaries.push(batchReply);
-            }
-            // If the combined summaries are still too long, recursively summarize
-            const combined = batchSummaries.join('\n---\n');
-            if (combined.length > MAX_PROMPT_LENGTH) {
-                UIController.showSpinner(`Round ${round + 1}: Combining summaries...`);
-                UIController.showStatus(`Round ${round + 1}: Combining summaries...`);
-                await summarizeSnippets(batchSummaries, round + 1);
-            } else {
-                UIController.showSpinner(`Round ${round}: Finalizing summary...`);
-                UIController.showStatus(`Round ${round}: Finalizing summary...`);
-                UIController.addMessage('ai', `Summary:\n${combined}`);
-                // Prompt for final answer after all summaries
-                await synthesizeFinalAnswer(combined);
-            }
-        } catch (err) {
-            UIController.addMessage('ai', `Summarization failed. Error: ${err && err.message ? err.message : err}`);
-        }
-        UIController.hideSpinner();
-        UIController.clearStatus();
-        readSnippets = [];
-    }
-
-    // Add synthesizeFinalAnswer helper
-    async function synthesizeFinalAnswer(summaries) {
-        if (!summaries || !originalUserQuestion) return;
-        const selectedModel = SettingsController.getSettings().selectedModel;
-        const prompt = `Based on the following summaries, provide a final, concise answer to the original question.\n\nSummaries:\n${summaries}\n\nOriginal question: ${originalUserQuestion}`;
-        try {
-            let finalAnswer = '';
-            if (selectedModel.startsWith('gpt')) {
-                const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                    { role: 'system', content: 'You are an assistant that synthesizes information from multiple sources and provides a final answer.' },
-                    { role: 'user', content: prompt }
-                ]);
-                finalAnswer = res.choices[0].message.content.trim();
-            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
-                const session = ApiService.createGeminiSession(selectedModel);
-                const chatHistory = [
-                    { role: 'system', content: 'You are an assistant that synthesizes information from multiple sources and provides a final answer.' },
-                    { role: 'user', content: prompt }
-                ];
-                const result = await session.sendMessage(prompt, chatHistory);
-                const candidate = result.candidates[0];
-                if (candidate.content.parts) {
-                    finalAnswer = candidate.content.parts.map(p => p.text).join(' ').trim();
-                } else if (candidate.content.text) {
-                    finalAnswer = candidate.content.text.trim();
-                }
-            }
-            if (finalAnswer) {
-                UIController.addMessage('ai', `Final Answer:\n${finalAnswer}`);
-            }
-            // Stop tool workflow after final answer
-            toolWorkflowActive = false;
-        } catch (err) {
-            UIController.addMessage('ai', `Final answer synthesis failed. Error: ${err && err.message ? err.message : err}`);
-            toolWorkflowActive = false;
         }
     }
 
