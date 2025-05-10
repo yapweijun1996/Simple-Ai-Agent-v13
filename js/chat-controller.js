@@ -97,17 +97,23 @@ Begin Reasoning Now:
             const maxRetries = 2;
             let allResults = [];
             allSearchUrls = new Set(); // Reset for this search session
+            let searchFailed = false;
 
             while (retries <= maxRetries) {
                 UIController.showSpinner(`Searching (${engine}) for "${userQuery}"...`);
                 UIController.showStatus(`Searching (${engine}) for "${userQuery}"...`);
-                results = await ToolsService.webSearch(userQuery, (result) => {
-                    // Collect URLs for later reading
-                    if (result.url) allSearchUrls.add(result.url);
-                    UIController.addSearchResult(result, (url) => {
-                        processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
-                    });
-                }, engine);
+                try {
+                    results = await ToolsService.webSearch(userQuery, (result) => {
+                        if (result.url) allSearchUrls.add(result.url);
+                        UIController.addSearchResult(result, (url) => {
+                            processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
+                        });
+                    }, engine);
+                } catch (err) {
+                    UIController.addMessage('ai', `Web search failed for "${userQuery}": ${err.message || err}`);
+                    searchFailed = true;
+                    break;
+                }
 
                 allResults = allResults.concat(results);
 
@@ -121,7 +127,6 @@ Begin Reasoning Now:
                 if (isGood) {
                     break;
                 } else if (retries < maxRetries) {
-                    // Get a refined query and retry
                     userQuery = await getRefinedQuery(results, userQuery);
                     retries++;
                     continue;
@@ -131,17 +136,27 @@ Begin Reasoning Now:
                 }
             }
 
-            // After all attempts, present all unique URLs for further reading
             if (allSearchUrls.size > 0) {
                 UIController.addMessage('ai', `Collected the following URLs for further reading:\n${[...allSearchUrls].join('\n')}`);
             }
 
-            // Optionally, call suggestResultsToRead with allResults or allSearchUrls
             lastSearchResults = allResults;
-            await suggestResultsToRead(allResults, args.query);
-
             UIController.hideSpinner();
             UIController.clearStatus();
+
+            // Fallback: If search failed, let the AI try to answer with what it knows
+            if (searchFailed || !allResults.length) {
+                UIController.addMessage('ai', 'Web search failed. I will try to answer your question based on the information I already have.');
+                const selectedModel = SettingsController.getSettings().selectedModel;
+                if (selectedModel.startsWith('gpt')) {
+                    await handleOpenAIMessage(selectedModel, args.query);
+                } else {
+                    await handleGeminiMessage(selectedModel, args.query);
+                }
+                return;
+            }
+
+            await suggestResultsToRead(allResults, args.query);
         },
         read_url: async function(args) {
             if (!args.url || typeof args.url !== 'string' || !/^https?:\/\//.test(args.url)) {
