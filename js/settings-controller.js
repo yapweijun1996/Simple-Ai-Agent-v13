@@ -13,7 +13,7 @@ const SettingsController = (function() {
         enableCoT: true,  // Default: checked
         showThinking: true,
         selectedModel: 'gpt-4.1-mini', // Default model
-        darkMode: false // Default dark mode
+        darkMode: true // Default dark mode is now true
     };
 
     /**
@@ -90,11 +90,11 @@ const SettingsController = (function() {
             darkMode: darkModeEnabled
         };
         
-        // Update dark mode class
+        // Update light/dark mode class
         if (darkModeEnabled) {
-            document.body.classList.add('dark-mode');
+            document.body.classList.remove('light-mode');
         } else {
-            document.body.classList.remove('dark-mode');
+            document.body.classList.add('light-mode');
         }
         
         // Update the chat controller settings
@@ -118,7 +118,7 @@ const SettingsController = (function() {
                 enableCoT: true,
                 showThinking: true,
                 selectedModel: 'gpt-4.1-mini',
-                darkMode: false,
+                darkMode: true,
                 ...savedSettings
             };
         } else {
@@ -127,7 +127,7 @@ const SettingsController = (function() {
                 enableCoT: true,
                 showThinking: true,
                 selectedModel: 'gpt-4.1-mini',
-                darkMode: false
+                darkMode: true
             };
         }
         
@@ -137,11 +137,11 @@ const SettingsController = (function() {
         // Set up settings button
         document.getElementById('settings-button').addEventListener('click', showSettingsModal);
 
-        // Apply dark mode if enabled
+        // Apply light/dark mode
         if (settings.darkMode) {
-            document.body.classList.add('dark-mode');
+            document.body.classList.remove('light-mode');
         } else {
-            document.body.classList.remove('dark-mode');
+            document.body.classList.add('light-mode');
         }
 
         // Set the dark mode toggle state if present

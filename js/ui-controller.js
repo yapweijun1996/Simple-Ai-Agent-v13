@@ -96,13 +96,6 @@ const UIController = (function() {
         // Set appropriate class based on sender
         messageElement.classList.add(`${sender}-message`);
         
-        // Set avatar
-        const avatarElement = messageElement.querySelector('.chat-app__avatar');
-        if (avatarElement) {
-            avatarElement.textContent = sender === 'user' ? '🧑' : '🤖';
-            avatarElement.setAttribute('aria-label', sender === 'user' ? 'User' : 'AI');
-        }
-        
         // Set timestamp
         const timestampElement = messageElement.querySelector('.chat-app__timestamp');
         if (timestampElement) {
