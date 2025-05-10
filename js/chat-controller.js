@@ -148,10 +148,41 @@ Begin Reasoning Now:
             if (searchFailed || !allResults.length) {
                 UIController.addMessage('ai', 'Web search failed. I will try to answer your question based on the information I already have.');
                 const selectedModel = SettingsController.getSettings().selectedModel;
-                // Synthesize any partial results/snippets as context
                 let contextMessage = '';
                 if (readSnippets && readSnippets.length) {
-                    contextMessage = `Here is what I was able to retrieve before the error:\n${readSnippets.join('\n---\n')}\n\n`;
+                    // Summarize the snippets before passing to the AI
+                    try {
+                        UIController.showSpinner('Summarizing retrieved information before answering...');
+                        let summary = '';
+                        if (selectedModel.startsWith('gpt')) {
+                            const prompt = `Summarize the following information as concisely as possible for later use in answering a question.\n\n${readSnippets.join('\n---\n')}`;
+                            const res = await ApiService.sendOpenAIRequest(selectedModel, [
+                                { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
+                                { role: 'user', content: prompt }
+                            ]);
+                            summary = res.choices[0].message.content.trim();
+                        } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
+                            const session = ApiService.createGeminiSession(selectedModel);
+                            const prompt = `Summarize the following information as concisely as possible for later use in answering a question.\n\n${readSnippets.join('\n---\n')}`;
+                            const chatHistory = [
+                                { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
+                                { role: 'user', content: prompt }
+                            ];
+                            const result = await session.sendMessage(prompt, chatHistory);
+                            const candidate = result.candidates[0];
+                            if (candidate.content.parts) {
+                                summary = candidate.content.parts.map(p => p.text).join(' ').trim();
+                            } else if (candidate.content.text) {
+                                summary = candidate.content.text.trim();
+                            }
+                        }
+                        UIController.hideSpinner();
+                        contextMessage = `Here is a summary of what I was able to retrieve before the error:\n${summary}\n\n`;
+                    } catch (err) {
+                        UIController.hideSpinner();
+                        // If summarization fails, fall back to raw snippets
+                        contextMessage = `Here is what I was able to retrieve before the error:\n${readSnippets.join('\n---\n')}\n\n`;
+                    }
                 }
                 const fallbackPrompt = `${contextMessage}Please answer the following question as best as you can: ${args.query}`;
                 if (selectedModel.startsWith('gpt')) {
