@@ -57,6 +57,9 @@ const UIController = (function() {
                 }
             }
         });
+
+        // Show empty state on init
+        showEmptyState();
     }
 
     /**
@@ -90,6 +93,7 @@ const UIController = (function() {
      * @returns {Element} - The created message element
      */
     function addMessage(sender, text) {
+        hideEmptyState();
         const chatWindow = document.getElementById('chat-window');
         const messageElement = Utils.createFromTemplate('message-template');
         
@@ -122,6 +126,7 @@ const UIController = (function() {
     function clearChatWindow() {
         const chatWindow = document.getElementById('chat-window');
         chatWindow.innerHTML = '';
+        showEmptyState();
     }
 
     /**
@@ -406,6 +411,44 @@ const UIController = (function() {
         summarizeBtn.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
 
+    /**
+     * Shows an empty state message in the chat window
+     */
+    function showEmptyState() {
+        const chatWindow = document.getElementById('chat-window');
+        if (!chatWindow.querySelector('.empty-state')) {
+            const empty = document.createElement('div');
+            empty.className = 'empty-state';
+            empty.setAttribute('aria-live', 'polite');
+            empty.textContent = 'Start the conversation!';
+            chatWindow.appendChild(empty);
+        }
+    }
+    function hideEmptyState() {
+        const chatWindow = document.getElementById('chat-window');
+        const empty = chatWindow.querySelector('.empty-state');
+        if (empty) empty.remove();
+    }
+
+    /**
+     * Show error feedback in the status bar (with ARIA live region)
+     */
+    function showError(message) {
+        const bar = document.getElementById('status-bar');
+        if (bar) {
+            bar.textContent = message;
+            bar.style.visibility = 'visible';
+            bar.setAttribute('role', 'alert');
+            bar.setAttribute('aria-live', 'assertive');
+            setTimeout(() => {
+                bar.textContent = '';
+                bar.style.visibility = 'hidden';
+                bar.removeAttribute('role');
+                bar.removeAttribute('aria-live');
+            }, 3000);
+        }
+    }
+
     // Public API
     return {
         init,
@@ -438,6 +481,9 @@ const UIController = (function() {
             chatWindow.appendChild(messageElement);
             messageElement.scrollIntoView({ behavior: 'smooth', block: 'end' });
             return messageElement;
-        }
+        },
+        showError,
+        showEmptyState,
+        hideEmptyState,
     };
 })(); 

@@ -231,6 +231,7 @@ html, body {
     border-radius: var(--radius-md);
     min-width: 300px;
     box-shadow: var(--shadow-sm);
+    animation: fadeInModal 0.4s cubic-bezier(.4,0,.2,1);
 }
 
 .settings-modal__title {
@@ -834,4 +835,27 @@ body:not(.light-mode) .chat-app__settings-button:focus {
     color: #fff;
     border-color: #6faaff;
     box-shadow: 0 0 0 2px #4f8cff55;
+}
+
+/* --- Empty State Message --- */
+.empty-state {
+    text-align: center;
+    color: var(--text-light-color);
+    font-size: 1.1rem;
+    margin: 40px 0;
+    opacity: 0.7;
+    letter-spacing: 0.02em;
+    animation: fadeInMessage 0.6s;
+}
+
+/* --- Settings Button Focus (Accessibility) --- */
+.chat-app__settings-button:focus {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    z-index: 2;
+}
+
+@keyframes fadeInModal {
+    from { opacity: 0; transform: scale(0.96) translateY(20px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
 } 
