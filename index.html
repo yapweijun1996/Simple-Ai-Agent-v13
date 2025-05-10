@@ -110,6 +110,12 @@
                         Show AI thinking process
                     </label>
                 </div>
+                <div class="settings-modal__item">
+                    <label for="dark-mode-toggle" class="settings-modal__label">
+                        <input type="checkbox" id="dark-mode-toggle" class="settings-modal__checkbox">
+                        Dark mode
+                    </label>
+                </div>
                 <div class="settings-modal__actions">
                     <button id="save-settings" class="settings-modal__button settings-modal__button--primary">Save</button>
                     <button id="close-settings" class="settings-modal__button">Close</button>
@@ -121,7 +127,9 @@
     <!-- Message template -->
     <template id="message-template">
         <article class="chat-app__message" role="article">
+            <div class="chat-app__avatar"></div>
             <div class="chat-app__message-content"></div>
+            <span class="chat-app__timestamp"></span>
         </article>
     </template>
 

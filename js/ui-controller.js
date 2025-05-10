@@ -96,6 +96,23 @@ const UIController = (function() {
         // Set appropriate class based on sender
         messageElement.classList.add(`${sender}-message`);
         
+        // Set avatar
+        const avatarElement = messageElement.querySelector('.chat-app__avatar');
+        if (avatarElement) {
+            avatarElement.textContent = sender === 'user' ? '🧑' : '🤖';
+            avatarElement.setAttribute('aria-label', sender === 'user' ? 'User' : 'AI');
+        }
+        
+        // Set timestamp
+        const timestampElement = messageElement.querySelector('.chat-app__timestamp');
+        if (timestampElement) {
+            const now = new Date();
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            timestampElement.textContent = `${hours}:${minutes}`;
+            timestampElement.title = now.toLocaleString();
+        }
+        
         // Format the message text
         updateMessageContent(messageElement, text);
         

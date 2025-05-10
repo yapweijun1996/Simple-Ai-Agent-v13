@@ -12,7 +12,8 @@ const SettingsController = (function() {
         streaming: false, // Default: unchecked
         enableCoT: true,  // Default: checked
         showThinking: true,
-        selectedModel: 'gpt-4.1-mini' // Default model
+        selectedModel: 'gpt-4.1-mini', // Default model
+        darkMode: false // Default dark mode
     };
 
     /**
@@ -30,6 +31,7 @@ const SettingsController = (function() {
         document.getElementById('cot-toggle').checked = settings.enableCoT;
         document.getElementById('show-thinking-toggle').checked = settings.showThinking;
         document.getElementById('model-select').value = settings.selectedModel;
+        document.getElementById('dark-mode-toggle').checked = settings.darkMode;
         
         // Add event listeners
         document.getElementById('save-settings').addEventListener('click', saveSettings);
@@ -57,6 +59,7 @@ const SettingsController = (function() {
         document.getElementById('cot-toggle').checked = settings.enableCoT;
         document.getElementById('show-thinking-toggle').checked = settings.showThinking;
         document.getElementById('model-select').value = settings.selectedModel;
+        document.getElementById('dark-mode-toggle').checked = settings.darkMode;
     }
 
     /**
@@ -76,14 +79,23 @@ const SettingsController = (function() {
         const cotEnabled = document.getElementById('cot-toggle').checked;
         const showThinkingEnabled = document.getElementById('show-thinking-toggle').checked;
         const selectedModelValue = document.getElementById('model-select').value;
+        const darkModeEnabled = document.getElementById('dark-mode-toggle').checked;
         
         settings = {
             ...settings,
             streaming: streamingEnabled,
             enableCoT: cotEnabled,
             showThinking: showThinkingEnabled,
-            selectedModel: selectedModelValue
+            selectedModel: selectedModelValue,
+            darkMode: darkModeEnabled
         };
+        
+        // Update dark mode class
+        if (darkModeEnabled) {
+            document.body.classList.add('dark-mode');
+        } else {
+            document.body.classList.remove('dark-mode');
+        }
         
         // Update the chat controller settings
         ChatController.updateSettings(settings);
@@ -101,22 +113,22 @@ const SettingsController = (function() {
     function initSettings() {
         const savedSettings = Utils.getSettingsFromCookie();
         if (savedSettings) {
-            // Ensure all expected keys are present, merging saved settings over defaults
-            settings = { 
-                streaming: false, // Default: unchecked
-                enableCoT: true,  // Default: checked
-                showThinking: true, // Default
-                selectedModel: 'gpt-4.1-mini', // Default
-                ...savedSettings // Overwrite with saved values if they exist
+            settings = {
+                streaming: false,
+                enableCoT: true,
+                showThinking: true,
+                selectedModel: 'gpt-4.1-mini',
+                darkMode: false,
+                ...savedSettings
             };
         } else {
-             // If no cookie, ensure defaults are set (redundant but safe)
-             settings = {
-                streaming: false, // Default: unchecked
-                enableCoT: true,  // Default: checked
+            settings = {
+                streaming: false,
+                enableCoT: true,
                 showThinking: true,
-                selectedModel: 'gpt-4.1-mini'
-             };
+                selectedModel: 'gpt-4.1-mini',
+                darkMode: false
+            };
         }
         
         // Apply settings to chat controller
@@ -124,6 +136,21 @@ const SettingsController = (function() {
         
         // Set up settings button
         document.getElementById('settings-button').addEventListener('click', showSettingsModal);
+
+        // Apply dark mode if enabled
+        if (settings.darkMode) {
+            document.body.classList.add('dark-mode');
+        } else {
+            document.body.classList.remove('dark-mode');
+        }
+
+        // Set the dark mode toggle state if present
+        setTimeout(() => {
+            const darkModeToggle = document.getElementById('dark-mode-toggle');
+            if (darkModeToggle) {
+                darkModeToggle.checked = !!settings.darkMode;
+            }
+        }, 0);
     }
 
     /**
