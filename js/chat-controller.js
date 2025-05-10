@@ -3,13 +3,14 @@
  * Chat Controller Module - Manages chat history and message handling
  * Coordinates between UI and API service for sending/receiving messages
  */
+import { toolHandlers } from './tool-handlers.js';
+import { extractToolCall, splitIntoBatches } from './utils.js';
+import * as ChatState from './chat-state.js';
+
 const ChatController = (function() {
     'use strict';
 
     // Private state
-    let chatHistory = [];
-    let totalTokens = 0;
-    let settings = { streaming: false, enableCoT: false, showThinking: true };
     let isThinking = false;
     let lastThinkingContent = '';
     let lastAnswerContent = '';
@@ -28,18 +29,6 @@ const ChatController = (function() {
     // Add a flag to control tool workflow
     let toolWorkflowActive = true;
 
-    // Add helper to robustly extract JSON tool calls (handles markdown fences)
-    function extractToolCall(text) {
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) return null;
-        try {
-            return JSON.parse(jsonMatch[0]);
-        } catch (err) {
-            console.warn('Tool JSON parse error:', err, 'from', jsonMatch[0]);
-            return null;
-        }
-    }
-
     const cotPreamble = `**Chain of Thought Instructions:**
 1.  **Understand:** Briefly rephrase the core problem or question.
 2.  **Deconstruct:** Break the problem down into smaller, logical steps needed to reach the solution.
@@ -52,99 +41,13 @@ const ChatController = (function() {
 Begin Reasoning Now:
 `;
 
-    // Tool handler registry
-    const toolHandlers = {
-        web_search: async function(args) {
-            if (!args.query || typeof args.query !== 'string' || !args.query.trim()) {
-                UIController.addMessage('ai', 'Error: Invalid web_search query.');
-                return;
-            }
-            const engine = args.engine || 'duckduckgo';
-            UIController.showSpinner(`Searching (${engine}) for "${args.query}"...`);
-            UIController.showStatus(`Searching (${engine}) for "${args.query}"...`);
-            let results = [];
-            try {
-                const streamed = [];
-                results = await ToolsService.webSearch(args.query, (result) => {
-                    streamed.push(result);
-                    // Pass highlight flag if this index is in highlightedResultIndices
-                    const idx = streamed.length - 1;
-                    UIController.addSearchResult(result, (url) => {
-                        processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
-                    }, highlightedResultIndices.has(idx));
-                }, engine);
-                if (!results.length) {
-                    UIController.addMessage('ai', `No search results found for "${args.query}".`);
-                }
-                const plainTextResults = results.map((r, i) => `${i+1}. ${r.title} (${r.url}) - ${r.snippet}`).join('\n');
-                chatHistory.push({ role: 'assistant', content: `Search results for "${args.query}" (${results.length}):\n${plainTextResults}` });
-                lastSearchResults = results;
-                // Prompt AI to suggest which results to read
-                await suggestResultsToRead(results, args.query);
-            } catch (err) {
-                UIController.hideSpinner();
-                UIController.addMessage('ai', `Web search failed: ${err.message}`);
-                chatHistory.push({ role: 'assistant', content: `Web search failed: ${err.message}` });
-            }
-            UIController.hideSpinner();
-            UIController.clearStatus();
-        },
-        read_url: async function(args) {
-            if (!args.url || typeof args.url !== 'string' || !/^https?:\/\//.test(args.url)) {
-                UIController.addMessage('ai', 'Error: Invalid read_url argument.');
-                return;
-            }
-            UIController.showSpinner(`Reading content from ${args.url}...`);
-            UIController.showStatus(`Reading content from ${args.url}...`);
-            try {
-                const result = await ToolsService.readUrl(args.url);
-                const start = (typeof args.start === 'number' && args.start >= 0) ? args.start : 0;
-                const length = (typeof args.length === 'number' && args.length > 0) ? args.length : 1122;
-                const snippet = String(result).slice(start, start + length);
-                const hasMore = (start + length) < String(result).length;
-                UIController.addReadResult(args.url, snippet, hasMore);
-                const plainTextSnippet = `Read content from ${args.url}:\n${snippet}${hasMore ? '...' : ''}`;
-                chatHistory.push({ role: 'assistant', content: plainTextSnippet });
-                // Collect snippets for summarization
-                readSnippets.push(snippet);
-                if (readSnippets.length >= 2) {
-                    UIController.addSummarizeButton(() => summarizeSnippets());
-                }
-            } catch (err) {
-                UIController.hideSpinner();
-                UIController.addMessage('ai', `Read URL failed: ${err.message}`);
-                chatHistory.push({ role: 'assistant', content: `Read URL failed: ${err.message}` });
-            }
-            UIController.hideSpinner();
-            UIController.clearStatus();
-        },
-        instant_answer: async function(args) {
-            if (!args.query || typeof args.query !== 'string' || !args.query.trim()) {
-                UIController.addMessage('ai', 'Error: Invalid instant_answer query.');
-                return;
-            }
-            UIController.showStatus(`Retrieving instant answer for "${args.query}"...`);
-            try {
-                const result = await ToolsService.instantAnswer(args.query);
-                const text = JSON.stringify(result, null, 2);
-                UIController.addMessage('ai', text);
-                chatHistory.push({ role: 'assistant', content: text });
-            } catch (err) {
-                UIController.clearStatus();
-                UIController.addMessage('ai', `Instant answer failed: ${err.message}`);
-                chatHistory.push({ role: 'assistant', content: `Instant answer failed: ${err.message}` });
-            }
-            UIController.clearStatus();
-        }
-    };
-
     /**
      * Initializes the chat controller
      * @param {Object} initialSettings - Initial settings for the chat
      */
     function init(initialSettings) {
         // Reset and seed chatHistory with system tool instructions
-        chatHistory = [{
+        ChatState.chatHistory = [{
             role: 'system',
             content: `You are an AI assistant with access to three external tools. You MUST use these tools to answer any question that requires up-to-date facts, statistics, or detailed content. Do NOT attempt to answer such questions from your own knowledge. The tools are:
 
@@ -177,7 +80,7 @@ A: {"tool":"instant_answer","arguments":{"query":"capital of France"}}
 If you understand, follow these instructions for every relevant question. Do NOT answer from your own knowledge if a tool call is needed. Wait for the tool result before continuing.`,
         }];
         if (initialSettings) {
-            settings = { ...settings, ...initialSettings };
+            ChatState.settings = { ...ChatState.settings, ...initialSettings };
         }
         
         // Set up event handlers through UI controller
@@ -189,16 +92,16 @@ If you understand, follow these instructions for every relevant question. Do NOT
      * @param {Object} newSettings - The new settings
      */
     function updateSettings(newSettings) {
-        settings = { ...settings, ...newSettings };
-        console.log('Chat settings updated:', settings);
+        ChatState.settings = { ...ChatState.settings, ...newSettings };
+        console.log('Chat settings updated:', ChatState.settings);
     }
 
     /**
      * Clears the chat history and resets token count
      */
     function clearChat() {
-        chatHistory = [];
-        totalTokens = 0;
+        ChatState.chatHistory = [];
+        ChatState.totalTokens = 0;
         Utils.updateTokenDisplay(0);
     }
 
@@ -207,7 +110,7 @@ If you understand, follow these instructions for every relevant question. Do NOT
      * @returns {Object} - The current settings
      */
     function getSettings() {
-        return { ...settings };
+        return { ...ChatState.settings };
     }
 
     /**
@@ -325,12 +228,12 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {string} - The formatted response for display
      */
     function formatResponseForDisplay(processed) {
-        if (!settings.enableCoT || !processed.hasStructuredResponse) {
+        if (!ChatState.settings.enableCoT || !processed.hasStructuredResponse) {
             return processed.answer;
         }
 
         // If showThinking is enabled, show both thinking and answer
-        if (settings.showThinking) {
+        if (ChatState.settings.showThinking) {
             if (processed.partial && processed.stage === 'thinking') {
                 return `Thinking: ${processed.thinking}`;
             } else if (processed.partial) {
@@ -367,7 +270,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
         UIController.clearUserInput();
         
         // Apply CoT formatting if enabled
-        const enhancedMessage = settings.enableCoT ? enhanceWithCoT(message) : message;
+        const enhancedMessage = ChatState.settings.enableCoT ? enhanceWithCoT(message) : message;
         
         // Get the selected model from SettingsController
         const currentSettings = SettingsController.getSettings();
@@ -376,13 +279,13 @@ Answer: [your final, concise answer based on the reasoning above]`;
         try {
             if (selectedModel.startsWith('gpt')) {
                 // For OpenAI, add enhanced message to chat history before sending to include the CoT prompt.
-                chatHistory.push({ role: 'user', content: enhancedMessage });
+                ChatState.chatHistory.push({ role: 'user', content: enhancedMessage });
                 console.log("Sent enhanced message to GPT:", enhancedMessage);
                 await handleOpenAIMessage(selectedModel, enhancedMessage);
             } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
                 // For Gemini, ensure chat history starts with user message if empty
-                if (chatHistory.length === 0) {
-                    chatHistory.push({ role: 'user', content: '' });
+                if (ChatState.chatHistory.length === 0) {
+                    ChatState.chatHistory.push({ role: 'user', content: '' });
                 }
                 await handleGeminiMessage(selectedModel, enhancedMessage);
             }
@@ -391,7 +294,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             UIController.addMessage('ai', 'Error: ' + error.message);
         } finally {
             // Update token usage display
-            Utils.updateTokenDisplay(totalTokens);
+            Utils.updateTokenDisplay(ChatState.totalTokens);
             // Clear status and re-enable inputs
             UIController.clearStatus();
             document.getElementById('message-input').disabled = false;
@@ -405,7 +308,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @param {string} message - The user message
      */
     async function handleOpenAIMessage(model, message) {
-        if (settings.streaming) {
+        if (ChatState.settings.streaming) {
             // Show status for streaming response
             UIController.showStatus('Streaming response...');
             // Streaming approach
@@ -414,7 +317,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             
             try {
                 // Start thinking indicator if CoT is enabled
-                if (settings.enableCoT) {
+                if (ChatState.settings.enableCoT) {
                     isThinking = true;
                     UIController.updateMessageContent(aiMsgElement, '🤔 Thinking...');
                 }
@@ -422,11 +325,11 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Process streaming response
                 const fullReply = await ApiService.streamOpenAIRequest(
                     model, 
-                    chatHistory,
+                    ChatState.chatHistory,
                     (chunk, fullText) => {
                         streamedResponse = fullText;
                         
-                        if (settings.enableCoT) {
+                        if (ChatState.settings.enableCoT) {
                             // Process the streamed response for CoT
                             const processed = processPartialCoTResponse(fullText);
                             
@@ -452,7 +355,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 }
                 
                 // Process response for CoT if enabled
-                if (settings.enableCoT) {
+                if (ChatState.settings.enableCoT) {
                     const processed = processCoTResponse(fullReply);
                     
                     // Add thinking to debug console if available
@@ -465,16 +368,16 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     UIController.updateMessageContent(aiMsgElement, displayText);
                     
                     // Add full response to chat history
-                    chatHistory.push({ role: 'assistant', content: fullReply });
+                    ChatState.chatHistory.push({ role: 'assistant', content: fullReply });
                 } else {
                     // Add to chat history after completed
-                    chatHistory.push({ role: 'assistant', content: fullReply });
+                    ChatState.chatHistory.push({ role: 'assistant', content: fullReply });
                 }
                 
                 // Get token usage
-                const tokenCount = await ApiService.getTokenUsage(model, chatHistory);
+                const tokenCount = await ApiService.getTokenUsage(model, ChatState.chatHistory);
                 if (tokenCount) {
-                    totalTokens += tokenCount;
+                    ChatState.totalTokens += tokenCount;
                 }
             } catch (err) {
                 UIController.updateMessageContent(aiMsgElement, 'Error: ' + err.message);
@@ -487,7 +390,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             UIController.showStatus('Waiting for AI response...');
             // Non-streaming approach
             try {
-                const result = await ApiService.sendOpenAIRequest(model, chatHistory);
+                const result = await ApiService.sendOpenAIRequest(model, ChatState.chatHistory);
                 
                 if (result.error) {
                     throw new Error(result.error.message);
@@ -495,7 +398,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 
                 // Update token usage
                 if (result.usage && result.usage.total_tokens) {
-                    totalTokens += result.usage.total_tokens;
+                    ChatState.totalTokens += result.usage.total_tokens;
                 }
                 
                 // Process response
@@ -509,7 +412,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     return;
                 }
                 
-                if (settings.enableCoT) {
+                if (ChatState.settings.enableCoT) {
                     const processed = processCoTResponse(reply);
                     
                     // Add thinking to debug console if available
@@ -518,13 +421,13 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     }
                     
                     // Add the full response to chat history
-                    chatHistory.push({ role: 'assistant', content: reply });
+                    ChatState.chatHistory.push({ role: 'assistant', content: reply });
                     
                     // Show appropriate content in the UI based on settings
                     const displayText = formatResponseForDisplay(processed);
                     UIController.addMessage('ai', displayText);
                 } else {
-                    chatHistory.push({ role: 'assistant', content: reply });
+                    ChatState.chatHistory.push({ role: 'assistant', content: reply });
                     UIController.addMessage('ai', reply);
                 }
             } catch (err) {
@@ -540,16 +443,16 @@ Answer: [your final, concise answer based on the reasoning above]`;
      */
     async function handleGeminiMessage(model, message) {
         // Add current message to chat history
-        chatHistory.push({ role: 'user', content: message });
+        ChatState.chatHistory.push({ role: 'user', content: message });
         
-        if (settings.streaming) {
+        if (ChatState.settings.streaming) {
             // Streaming approach
             const aiMsgElement = UIController.createEmptyAIMessage();
             let streamedResponse = '';
             
             try {
                 // Start thinking indicator if CoT is enabled
-                if (settings.enableCoT) {
+                if (ChatState.settings.enableCoT) {
                     isThinking = true;
                     UIController.updateMessageContent(aiMsgElement, '🤔 Thinking...');
                 }
@@ -557,11 +460,11 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Process streaming response
                 const fullReply = await ApiService.streamGeminiRequest(
                     model,
-                    chatHistory,
+                    ChatState.chatHistory,
                     (chunk, fullText) => {
                         streamedResponse = fullText;
                         
-                        if (settings.enableCoT) {
+                        if (ChatState.settings.enableCoT) {
                             // Process the streamed response for CoT
                             const processed = processPartialCoTResponse(fullText);
                             
@@ -587,7 +490,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 }
                 
                 // Process response for CoT if enabled
-                if (settings.enableCoT) {
+                if (ChatState.settings.enableCoT) {
                     const processed = processCoTResponse(fullReply);
                     
                     // Add thinking to debug console if available
@@ -600,16 +503,16 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     UIController.updateMessageContent(aiMsgElement, displayText);
                     
                     // Add full response to chat history
-                    chatHistory.push({ role: 'assistant', content: fullReply });
+                    ChatState.chatHistory.push({ role: 'assistant', content: fullReply });
                 } else {
                     // Add to chat history after completed
-                    chatHistory.push({ role: 'assistant', content: fullReply });
+                    ChatState.chatHistory.push({ role: 'assistant', content: fullReply });
                 }
                 
                 // Get token usage
-                const tokenCount = await ApiService.getTokenUsage(model, chatHistory);
+                const tokenCount = await ApiService.getTokenUsage(model, ChatState.chatHistory);
                 if (tokenCount) {
-                    totalTokens += tokenCount;
+                    ChatState.totalTokens += tokenCount;
                 }
             } catch (err) {
                 UIController.updateMessageContent(aiMsgElement, 'Error: ' + err.message);
@@ -621,11 +524,11 @@ Answer: [your final, concise answer based on the reasoning above]`;
             // Non-streaming approach
             try {
                 const session = ApiService.createGeminiSession(model);
-                const result = await session.sendMessage(message, chatHistory);
+                const result = await session.sendMessage(message, ChatState.chatHistory);
                 
                 // Update token usage if available
                 if (result.usageMetadata && typeof result.usageMetadata.totalTokenCount === 'number') {
-                    totalTokens += result.usageMetadata.totalTokenCount;
+                    ChatState.totalTokens += result.usageMetadata.totalTokenCount;
                 }
                 
                 // Process response
@@ -645,7 +548,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     return;
                 }
                 
-                if (settings.enableCoT) {
+                if (ChatState.settings.enableCoT) {
                     const processed = processCoTResponse(textResponse);
                     
                     // Add thinking to debug console if available
@@ -654,13 +557,13 @@ Answer: [your final, concise answer based on the reasoning above]`;
                     }
                     
                     // Add the full response to chat history
-                    chatHistory.push({ role: 'assistant', content: textResponse });
+                    ChatState.chatHistory.push({ role: 'assistant', content: textResponse });
                     
                     // Show appropriate content in the UI based on settings
                     const displayText = formatResponseForDisplay(processed);
                     UIController.addMessage('ai', displayText);
                 } else {
-                    chatHistory.push({ role: 'assistant', content: textResponse });
+                    ChatState.chatHistory.push({ role: 'assistant', content: textResponse });
                     UIController.addMessage('ai', textResponse);
                 }
             } catch (err) {
@@ -690,7 +593,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
         await toolHandlers[tool](args);
         // Only continue reasoning if the last AI reply was NOT a tool call
         if (!skipContinue) {
-            const lastEntry = chatHistory[chatHistory.length - 1];
+            const lastEntry = ChatState.chatHistory[ChatState.chatHistory.length - 1];
             let isToolCall = false;
             if (lastEntry && typeof lastEntry.content === 'string') {
                 try {
@@ -718,7 +621,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {Array} - The chat history
      */
     function getChatHistory() {
-        return [...chatHistory];
+        return [...ChatState.chatHistory];
     }
 
     /**
@@ -726,7 +629,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
      * @returns {number} - The total tokens used
      */
     function getTotalTokens() {
-        return totalTokens;
+        return ChatState.totalTokens;
     }
 
     // Helper: AI-driven deep reading for a URL
@@ -745,7 +648,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             } else {
                 await processToolCall({ tool: 'read_url', arguments: { url, start, length: chunkSize }, skipContinue: true });
                 // Find the last snippet added to chatHistory
-                const lastEntry = chatHistory[chatHistory.length - 1];
+                const lastEntry = ChatState.chatHistory[ChatState.chatHistory.length - 1];
                 if (lastEntry && typeof lastEntry.content === 'string' && lastEntry.content.startsWith('Read content from')) {
                     snippet = lastEntry.content.split('\n').slice(1).join('\n');
                     readCache.set(cacheKey, snippet);
@@ -848,26 +751,6 @@ Answer: [your final, concise answer based on the reasoning above]`;
         } catch (err) {
             // Ignore suggestion errors
         }
-    }
-
-    // Helper: Split array of strings into batches where each batch's total length <= maxLen
-    function splitIntoBatches(snippets, maxLen) {
-        const batches = [];
-        let currentBatch = [];
-        let currentLen = 0;
-        for (const snippet of snippets) {
-            if (currentLen + snippet.length > maxLen && currentBatch.length) {
-                batches.push(currentBatch);
-                currentBatch = [];
-                currentLen = 0;
-            }
-            currentBatch.push(snippet);
-            currentLen += snippet.length;
-        }
-        if (currentBatch.length) {
-            batches.push(currentBatch);
-        }
-        return batches;
     }
 
     // Summarization logic (recursive, context-aware)

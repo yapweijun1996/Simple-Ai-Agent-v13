@@ -308,4 +308,36 @@ const Utils = (function() {
         fetchWithRetry,
         fetchWithProxyRetry
     };
-})(); 
+})();
+
+function extractToolCall(text) {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    try {
+        return JSON.parse(jsonMatch[0]);
+    } catch (err) {
+        console.warn('Tool JSON parse error:', err, 'from', jsonMatch[0]);
+        return null;
+    }
+}
+
+function splitIntoBatches(snippets, maxLen) {
+    const batches = [];
+    let currentBatch = [];
+    let currentLen = 0;
+    for (const snippet of snippets) {
+        if (currentLen + snippet.length > maxLen && currentBatch.length) {
+            batches.push(currentBatch);
+            currentBatch = [];
+            currentLen = 0;
+        }
+        currentBatch.push(snippet);
+        currentLen += snippet.length;
+    }
+    if (currentBatch.length) {
+        batches.push(currentBatch);
+    }
+    return batches;
+}
+
+export { extractToolCall, splitIntoBatches }; 
