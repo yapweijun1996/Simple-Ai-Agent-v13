@@ -66,7 +66,7 @@ Begin Reasoning Now:
                     // Pass highlight flag if this index is in highlightedResultIndices
                     const idx = streamed.length - 1;
                     UIController.addSearchResult(result, (url) => {
-                        processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
+                        ToolOrchestrator.processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } }, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
                     }, highlightedResultIndices.has(idx));
                 }, engine);
                 if (!results.length) {
@@ -98,7 +98,10 @@ Begin Reasoning Now:
                 const length = (typeof args.length === 'number' && args.length > 0) ? args.length : 1122;
                 const snippet = String(result).slice(start, start + length);
                 const hasMore = (start + length) < String(result).length;
-                UIController.addReadResult(args.url, snippet, hasMore);
+                UIController.addReadResult(args.url, snippet, hasMore, (url) => {
+                    const offset = (readCache.has(`${url}:${snippet.length}`) ? snippet.length : (readCache.get(`${url}:${snippet.length}`) || snippet.length));
+                    ToolOrchestrator.processToolCall({ tool: 'read_url', arguments: { url, start: offset, length: 2000 } }, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
+                });
                 const plainTextSnippet = `Read content from ${args.url}:\n${snippet}${hasMore ? '...' : ''}`;
                 chatHistory.push({ role: 'assistant', content: plainTextSnippet });
                 // Collect snippets for summarization
@@ -977,7 +980,8 @@ Answer: [your final, concise answer based on the reasoning above]`;
         getChatHistory,
         getTotalTokens,
         clearChat,
-        processToolCall,
         getToolCallHistory: () => [...toolCallHistory],
     };
-})(); 
+})();
+
+window.ChatController = ChatController; 

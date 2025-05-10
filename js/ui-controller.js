@@ -352,8 +352,9 @@ const UIController = (function() {
      * @param {string} url
      * @param {string} snippet
      * @param {boolean} hasMore
+     * @param {Function} [onReadMore] - Callback when 'Read More' is clicked
      */
-    function addReadResult(url, snippet, hasMore) {
+    function addReadResult(url, snippet, hasMore, onReadMore) {
         urlOffsets.set(url, (urlOffsets.get(url) || 0) + snippet.length);
         const chatWindow = document.getElementById('chat-window');
         const article = document.createElement('article');
@@ -365,12 +366,9 @@ const UIController = (function() {
                 ${hasMore ? '<button class="read-more-btn" aria-label="Read more from this page">Read More</button>' : ''}
             </div>
         `;
-        if (hasMore) {
+        if (hasMore && typeof onReadMore === 'function') {
             const btn = article.querySelector('.read-more-btn');
-            btn.addEventListener('click', () => {
-                const offset = urlOffsets.get(url) || snippet.length;
-                ChatController.processToolCall({ tool: 'read_url', arguments: { url, start: offset, length: 2000 } });
-            });
+            btn.addEventListener('click', () => onReadMore(url));
             btn.tabIndex = 0;
         }
         chatWindow.appendChild(article);
