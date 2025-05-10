@@ -7,6 +7,7 @@ import { handleUserMessage } from './agent/agent-core.js';
 import UIController from './ui-controller.js';
 import SettingsController from './settings-controller.js';
 import Utils from './utils.js';
+import ApiService from './api-service.js';
 
 const ChatController = (function() {
     'use strict';

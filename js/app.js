@@ -7,6 +7,7 @@ import UIController from './ui-controller.js';
 import ChatController from './chat-controller.js';
 import SettingsController from './settings-controller.js';
 import Utils from './utils.js';
+import ApiService from './api-service.js';
 
 const App = (function() {
     'use strict';
