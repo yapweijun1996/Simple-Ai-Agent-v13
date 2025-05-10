@@ -86,23 +86,29 @@ Begin Reasoning Now:
     // Tool handler registry
     const toolHandlers = {
         web_search: async function(args) {
-            if (!args.query || typeof args.query !== 'string' || !args.query.trim()) {
+            let query = args.query;
+            if (!query || typeof query !== 'string' || !query.trim()) {
                 // Try to recover: use originalUserQuestion or last user message
-                let fallbackQuery = originalUserQuestion;
-                if (!fallbackQuery) {
-                    const lastUser = [...chatHistory].reverse().find(m => m.role === 'user');
-                    fallbackQuery = lastUser ? lastUser.content : '';
-                }
-                if (fallbackQuery && fallbackQuery.trim()) {
-                    UIController.addMessage('ai', 'Warning: Web search query was empty. Using your last question as the query.');
-                    args.query = fallbackQuery;
-                } else {
-                    UIController.addMessage('ai', 'Error: Web search query is empty and no fallback is available.');
-                    return;
+                if (typeof originalUserQuestion === 'string' && originalUserQuestion.trim()) {
+                    query = originalUserQuestion;
+                    console.log('web_search: Recovered query from originalUserQuestion:', query);
+                } else if (chatHistory && chatHistory.length) {
+                    // Find last user message
+                    for (let i = chatHistory.length - 1; i >= 0; i--) {
+                        if (chatHistory[i].role === 'user' && chatHistory[i].content && chatHistory[i].content.trim()) {
+                            query = chatHistory[i].content;
+                            console.log('web_search: Recovered query from chatHistory:', query);
+                            break;
+                        }
+                    }
                 }
             }
+            if (!query || typeof query !== 'string' || !query.trim()) {
+                console.warn('web_search: Could not recover a valid query. Aborting web search. Args:', args);
+                UIController.addMessage('ai', 'Error: No valid search query could be determined. Please rephrase your question.');
+                return;
+            }
             const engine = args.engine || 'duckduckgo';
-            let userQuery = args.query;
             let results = [];
             let retries = 0;
             const maxRetries = 2;
@@ -111,17 +117,17 @@ Begin Reasoning Now:
             let searchFailed = false;
 
             while (retries <= maxRetries) {
-                UIController.showSpinner(`Searching (${engine}) for "${userQuery}"...`);
-                UIController.showStatus(`Searching (${engine}) for "${userQuery}"...`);
+                UIController.showSpinner(`Searching (${engine}) for "${query}"...`);
+                UIController.showStatus(`Searching (${engine}) for "${query}"...`);
                 try {
-                    results = await ToolsService.webSearch(userQuery, (result) => {
+                    results = await ToolsService.webSearch(query, (result) => {
                         if (result.url) allSearchUrls.add(result.url);
                         UIController.addSearchResult(result, (url) => {
                             processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
                         });
                     }, engine);
                 } catch (err) {
-                    UIController.addMessage('ai', `Web search failed for "${userQuery}": ${err.message || err}`);
+                    UIController.addMessage('ai', `Web search failed for "${query}": ${err.message || err}`);
                     searchFailed = true;
                     break;
                 }
@@ -129,16 +135,16 @@ Begin Reasoning Now:
                 allResults = allResults.concat(results);
 
                 if (!results.length) {
-                    UIController.addMessage('ai', `No search results found for "${userQuery}".`);
+                    UIController.addMessage('ai', `No search results found for "${query}".`);
                     break;
                 }
 
                 // Assess quality
-                const isGood = await assessSearchQuality(results, userQuery);
+                const isGood = await assessSearchQuality(results, query);
                 if (isGood) {
                     break;
                 } else if (retries < maxRetries) {
-                    userQuery = await getRefinedQuery(results, userQuery);
+                    query = await getRefinedQuery(results, query);
                     retries++;
                     continue;
                 } else {
@@ -164,7 +170,7 @@ Begin Reasoning Now:
                     try {
                         UIController.showSpinner('Summarizing retrieved information before answering...');
                         let summary = '';
-                        const userQuestion = args.query;
+                        const userQuestion = query;
                         if (selectedModel.startsWith('gpt')) {
                             const prompt = `Given the following information retrieved from the web, extract and summarize all facts and details that are most relevant to answering this question. Present the information concisely, preferably in bullet points or a table if appropriate.\n\nQuestion: ${userQuestion}\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary that will help answer the question above.`;
                             const res = await ApiService.sendOpenAIRequest(selectedModel, [
@@ -199,7 +205,7 @@ Begin Reasoning Now:
                     urlsMessage = `You may also find more details at these links:\n${[...allSearchUrls].join('\n')}\n\n`;
                 }
                 const fallbackPrompt =
-`I'm unable to access live web results right now due to technical issues with all search tools.\n\n${contextMessage}${urlsMessage}Based on the information above and my own knowledge, here is my best attempt to answer your question:\n\nQuestion: ${args.query}\n\nPlease answer the user's question using the summary above. If you cannot find the answer, say so. If you need more up-to-date or detailed information, you may want to check the links above directly or try again later.`;
+`I'm unable to access live web results right now due to technical issues with all search tools.\n\n${contextMessage}${urlsMessage}Based on the information above and my own knowledge, here is my best attempt to answer your question:\n\nQuestion: ${query}\n\nPlease answer the user's question using the summary above. If you cannot find the answer, say so. If you need more up-to-date or detailed information, you may want to check the links above directly or try again later.`;
                 if (selectedModel.startsWith('gpt')) {
                     await handleOpenAIMessage(selectedModel, fallbackPrompt);
                 } else {
@@ -208,7 +214,7 @@ Begin Reasoning Now:
                 return;
             }
 
-            await suggestResultsToRead(allResults, args.query);
+            await suggestResultsToRead(allResults, query);
         },
         read_url: async function(args) {
             if (!args.url || typeof args.url !== 'string' || !/^https?:\/\//.test(args.url)) {
@@ -796,6 +802,15 @@ Answer: [your final, concise answer based on the reasoning above]`;
         console.log('processToolCall:', call);
         if (!toolWorkflowActive) return;
         const { tool, arguments: args, skipContinue } = call;
+        // Guard: If web_search and query is missing/empty, do not proceed
+        if (tool === 'web_search') {
+            let q = args && args.query;
+            if (!q || typeof q !== 'string' || !q.trim()) {
+                console.warn('processToolCall: web_search called with empty query. Skipping tool call. Call:', call);
+                UIController.addMessage('ai', 'Error: Web search tool was called with an empty query. Please rephrase your question.');
+                return;
+            }
+        }
         // Tool call loop protection
         const callSignature = JSON.stringify({ tool, args });
         if (lastToolCall === callSignature) {
