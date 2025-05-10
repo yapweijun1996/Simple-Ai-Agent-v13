@@ -87,8 +87,19 @@ Begin Reasoning Now:
     const toolHandlers = {
         web_search: async function(args) {
             if (!args.query || typeof args.query !== 'string' || !args.query.trim()) {
-                UIController.addMessage('ai', 'Error: Invalid web_search query.');
-                return;
+                // Try to recover: use originalUserQuestion or last user message
+                let fallbackQuery = originalUserQuestion;
+                if (!fallbackQuery) {
+                    const lastUser = [...chatHistory].reverse().find(m => m.role === 'user');
+                    fallbackQuery = lastUser ? lastUser.content : '';
+                }
+                if (fallbackQuery && fallbackQuery.trim()) {
+                    UIController.addMessage('ai', 'Warning: Web search query was empty. Using your last question as the query.');
+                    args.query = fallbackQuery;
+                } else {
+                    UIController.addMessage('ai', 'Error: Web search query is empty and no fallback is available.');
+                    return;
+                }
             }
             const engine = args.engine || 'duckduckgo';
             let userQuery = args.query;
@@ -781,6 +792,8 @@ Answer: [your final, concise answer based on the reasoning above]`;
 
     // Enhanced processToolCall using registry and validation
     async function processToolCall(call) {
+        // Debug log for all tool calls
+        console.log('processToolCall:', call);
         if (!toolWorkflowActive) return;
         const { tool, arguments: args, skipContinue } = call;
         // Tool call loop protection
