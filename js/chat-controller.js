@@ -812,10 +812,17 @@ Answer: [your final, concise answer based on the reasoning above]`;
             }
             if (!isToolCall) {
                 const selectedModel = SettingsController.getSettings().selectedModel;
+                // Use the last user question if message is empty
+                let nextMessage = originalUserQuestion;
+                if (!nextMessage) {
+                    // Fallback: try to get the last user message from chatHistory
+                    const lastUser = [...chatHistory].reverse().find(m => m.role === 'user');
+                    nextMessage = lastUser ? lastUser.content : '';
+                }
                 if (selectedModel.startsWith('gpt')) {
-                    await handleOpenAIMessage(selectedModel, '');
+                    await handleOpenAIMessage(selectedModel, nextMessage);
                 } else {
-                    await handleGeminiMessage(selectedModel, '');
+                    await handleGeminiMessage(selectedModel, nextMessage);
                 }
             } else {
                 UIController.addMessage('ai', 'Warning: AI outputted another tool call without reasoning. Stopping to prevent infinite loop.');
