@@ -302,4 +302,4 @@ const ApiService = (function() {
     };
 })();
 
-window.ApiService = ApiService; 
+export default ApiService; 
