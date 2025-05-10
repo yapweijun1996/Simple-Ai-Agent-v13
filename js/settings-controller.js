@@ -141,4 +141,6 @@ const SettingsController = (function() {
         hideSettingsModal,
         getSettings
     };
-})(); 
+})();
+
+export default SettingsController; 

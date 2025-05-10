@@ -430,4 +430,6 @@ const UIController = (function() {
             return messageElement;
         }
     };
-})(); 
+})();
+
+export default UIController; 

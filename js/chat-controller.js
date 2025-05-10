@@ -3,6 +3,11 @@
  * Chat Controller Module - Manages chat history and message handling
  * Coordinates between UI and API service for sending/receiving messages
  */
+import { handleUserMessage } from './agent/agent-core.js';
+import UIController from './ui-controller.js';
+import SettingsController from './settings-controller.js';
+import Utils from './utils.js';
+
 const ChatController = (function() {
     'use strict';
 

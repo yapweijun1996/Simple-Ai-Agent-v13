@@ -1,6 +1,9 @@
 // agent-core.js
 // Central workflow engine for the AI agent
 
+import { getModelAdapter } from './model-adapters/index.js';
+import { runTool } from './tools/index.js';
+
 /**
  * Handles a user message by orchestrating tool use and model reasoning.
  * @param {string} message - The user's message
@@ -19,4 +22,9 @@ export async function handleUserMessage(message, settings, state) {
         reasoningSteps: [],
         finalAnswer: null
     };
+}
+
+// Helper: Chain of Thought prompt enhancer
+function enhanceWithCoT(message) {
+    return `${message}\n\nI'd like you to use Chain of Thought reasoning. Please think step-by-step before providing your final answer. Format your response like this:\nThinking: [detailed reasoning process, exploring different angles and considerations]\nAnswer: [your final, concise answer based on the reasoning above]`;
 } 
