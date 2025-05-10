@@ -14,12 +14,8 @@ const ChatController = (function() {
     let lastThinkingContent = '';
     let lastAnswerContent = '';
     let readSnippets = [];
-    let lastToolCall = null;
-    let lastToolCallCount = 0;
-    const MAX_TOOL_CALL_REPEAT = 3;
     let lastSearchResults = [];
     let autoReadInProgress = false;
-    let toolCallHistory = [];
     let highlightedResultIndices = new Set();
     // Add a cache for read_url results
     const readCache = new Map();
@@ -182,6 +178,13 @@ If you understand, follow these instructions for every relevant question. Do NOT
         
         // Set up event handlers through UI controller
         UIController.setupEventHandlers(sendMessage, clearChat);
+
+        // Inject toolHandlers into ToolOrchestrator
+        ToolOrchestrator.init({
+            web_search: async function(args, context) { /* logic from old toolHandlers.web_search, using context */ },
+            read_url: async function(args, context) { /* logic from old toolHandlers.read_url, using context */ },
+            instant_answer: async function(args, context) { /* logic from old toolHandlers.instant_answer, using context */ }
+        });
     }
 
     /**
@@ -447,7 +450,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Intercept JSON tool call in streaming mode
                 const toolCall = extractToolCall(fullReply);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
-                    await processToolCall(toolCall);
+                    await ToolOrchestrator.processToolCall(toolCall, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
                     return;
                 }
                 
@@ -505,7 +508,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Intercept tool call JSON
                 const toolCall = extractToolCall(reply);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
-                    await processToolCall(toolCall);
+                    await ToolOrchestrator.processToolCall(toolCall, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
                     return;
                 }
                 
@@ -582,7 +585,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Intercept JSON tool call in streaming mode
                 const toolCall = extractToolCall(fullReply);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
-                    await processToolCall(toolCall);
+                    await ToolOrchestrator.processToolCall(toolCall, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
                     return;
                 }
                 
@@ -641,7 +644,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Intercept tool call JSON
                 const toolCall = extractToolCall(textResponse);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
-                    await processToolCall(toolCall);
+                    await ToolOrchestrator.processToolCall(toolCall, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
                     return;
                 }
                 
@@ -665,50 +668,6 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 }
             } catch (err) {
                 throw err;
-            }
-        }
-    }
-
-    // Enhanced processToolCall using registry and validation
-    async function processToolCall(call) {
-        if (!toolWorkflowActive) return;
-        const { tool, arguments: args, skipContinue } = call;
-        // Tool call loop protection
-        const callSignature = JSON.stringify({ tool, args });
-        if (lastToolCall === callSignature) {
-            lastToolCallCount++;
-        } else {
-            lastToolCall = callSignature;
-            lastToolCallCount = 1;
-        }
-        if (lastToolCallCount > MAX_TOOL_CALL_REPEAT) {
-            UIController.addMessage('ai', `Error: Tool call loop detected. The same tool call has been made more than ${MAX_TOOL_CALL_REPEAT} times in a row. Stopping to prevent infinite loop.`);
-            return;
-        }
-        // Log tool call
-        toolCallHistory.push({ tool, args, timestamp: new Date().toISOString() });
-        await toolHandlers[tool](args);
-        // Only continue reasoning if the last AI reply was NOT a tool call
-        if (!skipContinue) {
-            const lastEntry = chatHistory[chatHistory.length - 1];
-            let isToolCall = false;
-            if (lastEntry && typeof lastEntry.content === 'string') {
-                try {
-                    const parsed = JSON.parse(lastEntry.content);
-                    if (parsed.tool && parsed.arguments) {
-                        isToolCall = true;
-                    }
-                } catch {}
-            }
-            if (!isToolCall) {
-                const selectedModel = SettingsController.getSettings().selectedModel;
-                if (selectedModel.startsWith('gpt')) {
-                    await handleOpenAIMessage(selectedModel, '');
-                } else {
-                    await handleGeminiMessage(selectedModel, '');
-                }
-            } else {
-                UIController.addMessage('ai', 'Warning: AI outputted another tool call without reasoning. Stopping to prevent infinite loop.');
             }
         }
     }
@@ -743,7 +702,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             if (readCache.has(cacheKey)) {
                 snippet = readCache.get(cacheKey);
             } else {
-                await processToolCall({ tool: 'read_url', arguments: { url, start, length: chunkSize }, skipContinue: true });
+                await ToolOrchestrator.processToolCall({ tool: 'read_url', arguments: { url, start, length: chunkSize }, skipContinue: true });
                 // Find the last snippet added to chatHistory
                 const lastEntry = chatHistory[chatHistory.length - 1];
                 if (lastEntry && typeof lastEntry.content === 'string' && lastEntry.content.startsWith('Read content from')) {
