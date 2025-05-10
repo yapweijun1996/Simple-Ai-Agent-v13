@@ -541,10 +541,6 @@ html, body {
   100% { box-shadow: 0 0 0 0 rgba(0,123,255,0); }
 }
 
-.chat-app__avatar {
-    display: none !important;
-}
-
 .chat-app__timestamp {
     font-size: 0.75rem;
     color: #aaa;
@@ -634,9 +630,4 @@ body.dark-mode .ai-suggested {
 
 body.dark-mode .ai-suggested::before {
     background: #4f8cff;
-}
-
-body.dark-mode .chat-app__avatar {
-    background: #23272e;
-    color: #4f8cff;
 } 
