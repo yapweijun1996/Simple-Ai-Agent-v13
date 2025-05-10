@@ -87,24 +87,26 @@ Begin Reasoning Now:
     const toolHandlers = {
         web_search: async function(args) {
             let query = args.query;
+            console.log('[web_search] Initial query:', query);
             if (!query || typeof query !== 'string' || !query.trim()) {
                 // Try to recover: use originalUserQuestion or last user message
+                console.log('[web_search] Attempting to recover query. originalUserQuestion:', originalUserQuestion);
                 if (typeof originalUserQuestion === 'string' && originalUserQuestion.trim()) {
                     query = originalUserQuestion;
-                    console.log('web_search: Recovered query from originalUserQuestion:', query);
+                    console.log('[web_search] Recovered query from originalUserQuestion:', query);
                 } else if (chatHistory && chatHistory.length) {
                     // Find last user message
                     for (let i = chatHistory.length - 1; i >= 0; i--) {
                         if (chatHistory[i].role === 'user' && chatHistory[i].content && chatHistory[i].content.trim()) {
                             query = chatHistory[i].content;
-                            console.log('web_search: Recovered query from chatHistory:', query);
+                            console.log('[web_search] Recovered query from chatHistory:', query);
                             break;
                         }
                     }
                 }
             }
             if (!query || typeof query !== 'string' || !query.trim()) {
-                console.warn('web_search: Could not recover a valid query. Aborting web search. Args:', args);
+                console.warn('[web_search] Could not recover a valid query. Aborting web search. Args:', args);
                 UIController.addMessage('ai', 'Error: No valid search query could be determined. Please rephrase your question.');
                 return;
             }
@@ -166,13 +168,24 @@ Begin Reasoning Now:
                 UIController.addMessage('ai', 'Web search failed. I will try to answer your question based on the information I already have.');
                 const selectedModel = SettingsController.getSettings().selectedModel;
                 let contextMessage = '';
+                let snippetsToSummarize = [];
                 if (readSnippets && readSnippets.length) {
+                    snippetsToSummarize = readSnippets;
+                    console.log('[web_search] Using readSnippets for summarization:', readSnippets);
+                } else if (allResults && allResults.length) {
+                    // Use snippets from search results if readSnippets is empty
+                    snippetsToSummarize = allResults.map(r => r.snippet).filter(Boolean);
+                    console.log('[web_search] Using allResults snippets for summarization:', snippetsToSummarize);
+                } else {
+                    console.log('[web_search] No snippets available for summarization.');
+                }
+                if (snippetsToSummarize.length) {
                     try {
                         UIController.showSpinner('Summarizing retrieved information before answering...');
                         let summary = '';
                         const userQuestion = query;
                         if (selectedModel.startsWith('gpt')) {
-                            const prompt = `Given the following information retrieved from the web, extract and summarize all facts and details that are most relevant to answering this question. Present the information concisely, preferably in bullet points or a table if appropriate.\n\nQuestion: ${userQuestion}\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary that will help answer the question above.`;
+                            const prompt = `Given the following information retrieved from the web, extract and summarize all facts and details that are most relevant to answering this question. Present the information concisely, preferably in bullet points or a table if appropriate.\n\nQuestion: ${userQuestion}\n\nInformation:\n${snippetsToSummarize.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary that will help answer the question above.`;
                             const res = await ApiService.sendOpenAIRequest(selectedModel, [
                                 { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
                                 { role: 'user', content: prompt }
@@ -180,7 +193,7 @@ Begin Reasoning Now:
                             summary = res.choices[0].message.content.trim();
                         } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
                             const session = ApiService.createGeminiSession(selectedModel);
-                            const prompt = `Given the following information retrieved from the web, extract and summarize all facts and details that are most relevant to answering this question. Present the information concisely, preferably in bullet points or a table if appropriate.\n\nQuestion: ${userQuestion}\n\nInformation:\n${readSnippets.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary that will help answer the question above.`;
+                            const prompt = `Given the following information retrieved from the web, extract and summarize all facts and details that are most relevant to answering this question. Present the information concisely, preferably in bullet points or a table if appropriate.\n\nQuestion: ${userQuestion}\n\nInformation:\n${snippetsToSummarize.join('\n---\n')}\n\nPlease provide a concise, fact-focused summary that will help answer the question above.`;
                             const chatHistory = [
                                 { role: 'system', content: 'You are an assistant that summarizes information for later use.' },
                                 { role: 'user', content: prompt }
@@ -197,7 +210,7 @@ Begin Reasoning Now:
                         contextMessage = `Here is a summary of what I was able to retrieve before the error:\n${summary}\n\n`;
                     } catch (err) {
                         UIController.hideSpinner();
-                        contextMessage = `Here is what I was able to retrieve before the error:\n${readSnippets.join('\n---\n')}\n\n`;
+                        contextMessage = `Here is what I was able to retrieve before the error:\n${snippetsToSummarize.join('\n---\n')}\n\n`;
                     }
                 }
                 let urlsMessage = '';
