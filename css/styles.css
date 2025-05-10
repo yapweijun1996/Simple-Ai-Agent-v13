@@ -630,4 +630,67 @@ body.dark-mode .ai-suggested {
 
 body.dark-mode .ai-suggested::before {
     background: #4f8cff;
+}
+
+body:not(.light-mode) .answer-section {
+    background-color: #1e2d1e;
+    border-left: 3px solid #4caf80;
+    color: #eaffea;
+}
+body:not(.light-mode) .answer-section strong {
+    color: #4caf80;
+}
+
+body:not(.light-mode) .thinking-section {
+    background-color: #1e2330;
+    border-left: 3px solid #2196f3;
+    color: #eaf3ff;
+}
+body:not(.light-mode) .thinking-section strong {
+    color: #4faaff;
+}
+
+body:not(.light-mode) .chat-app__timestamp {
+    color: #b0b0b0;
+}
+
+body:not(.light-mode) .chat-app__message {
+    box-shadow: 0 2px 8px #0006;
+}
+
+body:not(.light-mode) .chat-app__message-input {
+    background: #23272e;
+    color: #eaeaea;
+    border: 1px solid #2c313a;
+}
+body:not(.light-mode) .chat-app__message-input:focus {
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 2px #4f8cff55;
+}
+
+body:not(.light-mode) .chat-app__send-button {
+    background: #4f8cff;
+    color: #fff;
+    border: 1px solid #4f8cff;
+    box-shadow: 0 2px 8px #4f8cff22;
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+body:not(.light-mode) .chat-app__send-button:hover,
+body:not(.light-mode) .chat-app__send-button:focus {
+    background: #6faaff;
+    border-color: #6faaff;
+    box-shadow: 0 0 8px #4f8cff88;
+}
+
+body:not(.light-mode) pre, body:not(.light-mode) code {
+    background: #23272e !important;
+    color: #eaffea !important;
+    border-radius: 4px;
+}
+
+body:not(.light-mode) a {
+    color: #4faaff;
+}
+body:not(.light-mode) a:hover {
+    color: #82cfff;
 } 
