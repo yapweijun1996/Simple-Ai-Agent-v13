@@ -27,6 +27,7 @@ const ChatController = (function() {
     let originalUserQuestion = '';
     // Add a flag to control tool workflow
     let toolWorkflowActive = true;
+    let allSearchUrls = new Set();
 
     // Add helper to robustly extract JSON tool calls (handles markdown fences)
     function extractToolCall(text) {
@@ -52,6 +53,36 @@ const ChatController = (function() {
 Begin Reasoning Now:
 `;
 
+    // Helper: Assess search result quality using AI
+    async function assessSearchQuality(results, userQuery) {
+        const prompt = `Given these search results for the query: "${userQuery}", are they relevant and likely to answer the question? Reply YES or NO and a brief reason.\n\n${results.map((r, i) => `${i+1}. ${r.title} - ${r.snippet}`).join('\n')}`;
+        const selectedModel = SettingsController.getSettings().selectedModel;
+        let aiReply = '';
+        if (selectedModel.startsWith('gpt')) {
+            const res = await ApiService.sendOpenAIRequest(selectedModel, [
+                { role: 'system', content: 'You are an assistant that assesses search result quality.' },
+                { role: 'user', content: prompt }
+            ]);
+            aiReply = res.choices[0].message.content.trim().toLowerCase();
+        }
+        return aiReply.startsWith('yes');
+    }
+
+    // Helper: Get a refined query from AI
+    async function getRefinedQuery(results, userQuery) {
+        const prompt = `The search results for "${userQuery}" were not relevant. Suggest a better search query to find more relevant information.`;
+        const selectedModel = SettingsController.getSettings().selectedModel;
+        let aiReply = '';
+        if (selectedModel.startsWith('gpt')) {
+            const res = await ApiService.sendOpenAIRequest(selectedModel, [
+                { role: 'system', content: 'You are an assistant that helps refine search queries.' },
+                { role: 'user', content: prompt }
+            ]);
+            aiReply = res.choices[0].message.content.trim();
+        }
+        return aiReply;
+    }
+
     // Tool handler registry
     const toolHandlers = {
         web_search: async function(args) {
@@ -60,32 +91,55 @@ Begin Reasoning Now:
                 return;
             }
             const engine = args.engine || 'duckduckgo';
-            UIController.showSpinner(`Searching (${engine}) for "${args.query}"...`);
-            UIController.showStatus(`Searching (${engine}) for "${args.query}"...`);
+            let userQuery = args.query;
             let results = [];
-            try {
-                const streamed = [];
-                results = await ToolsService.webSearch(args.query, (result) => {
-                    streamed.push(result);
-                    // Pass highlight flag if this index is in highlightedResultIndices
-                    const idx = streamed.length - 1;
+            let retries = 0;
+            const maxRetries = 2;
+            let allResults = [];
+            allSearchUrls = new Set(); // Reset for this search session
+
+            while (retries <= maxRetries) {
+                UIController.showSpinner(`Searching (${engine}) for "${userQuery}"...`);
+                UIController.showStatus(`Searching (${engine}) for "${userQuery}"...`);
+                results = await ToolsService.webSearch(userQuery, (result) => {
+                    // Collect URLs for later reading
+                    if (result.url) allSearchUrls.add(result.url);
                     UIController.addSearchResult(result, (url) => {
                         processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
-                    }, highlightedResultIndices.has(idx));
+                    });
                 }, engine);
+
+                allResults = allResults.concat(results);
+
                 if (!results.length) {
-                    UIController.addMessage('ai', `No search results found for "${args.query}".`);
+                    UIController.addMessage('ai', `No search results found for "${userQuery}".`);
+                    break;
                 }
-                const plainTextResults = results.map((r, i) => `${i+1}. ${r.title} (${r.url}) - ${r.snippet}`).join('\n');
-                chatHistory.push({ role: 'assistant', content: `Search results for "${args.query}" (${results.length}):\n${plainTextResults}` });
-                lastSearchResults = results;
-                // Prompt AI to suggest which results to read
-                await suggestResultsToRead(results, args.query);
-            } catch (err) {
-                UIController.hideSpinner();
-                UIController.addMessage('ai', `Web search failed: ${err.message}`);
-                chatHistory.push({ role: 'assistant', content: `Web search failed: ${err.message}` });
+
+                // Assess quality
+                const isGood = await assessSearchQuality(results, userQuery);
+                if (isGood) {
+                    break;
+                } else if (retries < maxRetries) {
+                    // Get a refined query and retry
+                    userQuery = await getRefinedQuery(results, userQuery);
+                    retries++;
+                    continue;
+                } else {
+                    UIController.addMessage('ai', `Search results for "${args.query}" were not relevant after ${maxRetries+1} attempts.`);
+                    break;
+                }
             }
+
+            // After all attempts, present all unique URLs for further reading
+            if (allSearchUrls.size > 0) {
+                UIController.addMessage('ai', `Collected the following URLs for further reading:\n${[...allSearchUrls].join('\n')}`);
+            }
+
+            // Optionally, call suggestResultsToRead with allResults or allSearchUrls
+            lastSearchResults = allResults;
+            await suggestResultsToRead(allResults, args.query);
+
             UIController.hideSpinner();
             UIController.clearStatus();
         },
