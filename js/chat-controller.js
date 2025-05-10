@@ -712,7 +712,48 @@ Answer: [your final, concise answer based on the reasoning above]`;
         return allChunks;
     }
 
-    // Autonomous follow-up: after AI suggests which results to read, auto-read and summarize
+    // Suggestion logic: ask AI which results to read
+    async function suggestResultsToRead(results, query) {
+        if (!results || results.length === 0) return;
+        // Enhanced prompt: ask for ranking, confidence, and reasons
+        const prompt = `Given these search results for the query: "${query}", rank the results (by number) in order of relevance to read in detail. For each, provide a confidence score (0-100) and a brief reason. Reply in the format: 1 (95): Reason, 3 (80): Reason, ...`;
+        const numberedResults = results.map((r, i) => `${i+1}. ${r.title} - ${r.snippet}`).join('\n');
+        const fullPrompt = `${prompt}\n\n${numberedResults}`;
+        const selectedModel = SettingsController.getSettings().selectedModel;
+        let aiReply = '';
+        try {
+            if (selectedModel.startsWith('gpt')) {
+                const res = await ApiService.sendOpenAIRequest(selectedModel, [
+                    { role: 'system', content: 'You are an assistant helping to select and rank the most relevant search results.' },
+                    { role: 'user', content: fullPrompt }
+                ]);
+                aiReply = res.choices[0].message.content.trim();
+            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
+                const session = ApiService.createGeminiSession(selectedModel);
+                const chatHistory = [
+                    { role: 'system', content: 'You are an assistant helping to select and rank the most relevant search results.' },
+                    { role: 'user', content: fullPrompt }
+                ];
+                const result = await session.sendMessage(fullPrompt, chatHistory);
+                const candidate = result.candidates[0];
+                if (candidate.content.parts) {
+                    aiReply = candidate.content.parts.map(p => p.text).join(' ').trim();
+                } else if (candidate.content.text) {
+                    aiReply = candidate.content.text.trim();
+                }
+            }
+            if (aiReply) {
+                UIController.addMessage('ai', `AI suggests reading (ranked): ${aiReply}`);
+                // Parse numbers from AI reply (e.g., "1 (95): Reason, 3 (80): Reason")
+                const nums = Array.from(aiReply.matchAll(/(\d+)\s*\(/g)).map(m => parseInt(m[1], 10));
+                await autoReadAndSummarizeFromSuggestion(nums.join(','));
+            }
+        } catch (err) {
+            // Ignore suggestion errors
+        }
+    }
+
+    // Batch read URLs in parallel (with concurrency limit)
     async function autoReadAndSummarizeFromSuggestion(aiReply) {
         if (autoReadInProgress) return; // Prevent overlap
         if (!lastSearchResults || !Array.isArray(lastSearchResults) || !lastSearchResults.length) return;
@@ -721,60 +762,22 @@ Answer: [your final, concise answer based on the reasoning above]`;
         if (!match) return;
         const nums = match[1].split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
         if (!nums.length) return;
-        // Store highlighted indices (0-based)
         highlightedResultIndices = new Set(nums.map(n => n - 1));
-        // Map numbers to URLs (1-based index)
         const urlsToRead = nums.map(n => lastSearchResults[n-1]?.url).filter(Boolean);
         if (!urlsToRead.length) return;
         autoReadInProgress = true;
+        const concurrency = 3; // Limit to 3 parallel reads
         try {
-            for (let i = 0; i < urlsToRead.length; i++) {
-                const url = urlsToRead[i];
-                UIController.showSpinner(`Reading ${i + 1} of ${urlsToRead.length} URLs: ${url}...`);
-                await deepReadUrl(url, 5, 2000);
+            let i = 0;
+            while (i < urlsToRead.length) {
+                const batch = urlsToRead.slice(i, i + concurrency);
+                UIController.showSpinner(`Reading URLs ${i + 1}-${i + batch.length} of ${urlsToRead.length}...`);
+                await Promise.all(batch.map(url => deepReadUrl(url, 5, 2000)));
+                i += concurrency;
             }
-            // After all reads, auto-summarize
             await summarizeSnippets();
         } finally {
             autoReadInProgress = false;
-        }
-    }
-
-    // Suggestion logic: ask AI which results to read
-    async function suggestResultsToRead(results, query) {
-        if (!results || results.length === 0) return;
-        const prompt = `Given these search results for the query: "${query}", which results (by number) are most relevant to read in detail?\n\n${results.map((r, i) => `${i+1}. ${r.title} - ${r.snippet}`).join('\n')}\n\nReply with a comma-separated list of result numbers.`;
-        const selectedModel = SettingsController.getSettings().selectedModel;
-        let aiReply = '';
-        try {
-            if (selectedModel.startsWith('gpt')) {
-                const res = await ApiService.sendOpenAIRequest(selectedModel, [
-                    { role: 'system', content: 'You are an assistant helping to select the most relevant search results.' },
-                    { role: 'user', content: prompt }
-                ]);
-                aiReply = res.choices[0].message.content.trim();
-            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
-                const session = ApiService.createGeminiSession(selectedModel);
-                const chatHistory = [
-                    { role: 'system', content: 'You are an assistant helping to select the most relevant search results.' },
-                    { role: 'user', content: prompt }
-                ];
-                const result = await session.sendMessage(prompt, chatHistory);
-                const candidate = result.candidates[0];
-                if (candidate.content.parts) {
-                    aiReply = candidate.content.parts.map(p => p.text).join(' ').trim();
-                } else if (candidate.content.text) {
-                    aiReply = candidate.content.text.trim();
-                }
-            }
-            // Optionally, parse and highlight suggested results
-            if (aiReply) {
-                UIController.addMessage('ai', `AI suggests reading results: ${aiReply}`);
-                // Autonomous follow-up: auto-read and summarize
-                await autoReadAndSummarizeFromSuggestion(aiReply);
-            }
-        } catch (err) {
-            // Ignore suggestion errors
         }
     }
 
@@ -899,7 +902,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
         readSnippets = [];
     }
 
-    // Add synthesizeFinalAnswer helper
+    // After synthesizeFinalAnswer, check if info is sufficient
     async function synthesizeFinalAnswer(summaries) {
         if (!summaries || !originalUserQuestion) return;
         const selectedModel = SettingsController.getSettings().selectedModel;
@@ -929,11 +932,50 @@ Answer: [your final, concise answer based on the reasoning above]`;
             if (finalAnswer) {
                 UIController.addMessage('ai', `Final Answer:\n${finalAnswer}`);
             }
-            // Stop tool workflow after final answer
+            // After final answer, check sufficiency
+            await checkInformationSufficiency(summaries, finalAnswer);
             toolWorkflowActive = false;
         } catch (err) {
             UIController.addMessage('ai', `Final answer synthesis failed. Error: ${err && err.message ? err.message : err}`);
             toolWorkflowActive = false;
+        }
+    }
+
+    // New: Check if information is sufficient and suggest query refinement
+    async function checkInformationSufficiency(summaries, finalAnswer) {
+        const selectedModel = SettingsController.getSettings().selectedModel;
+        const prompt = `Given the following answer and summaries, is the information sufficient to fully answer the user's question? If not, what is missing or what new search query would help?\n\nSummaries:\n${summaries}\n\nFinal Answer:\n${finalAnswer}\n\nReply YES if sufficient, or NO and suggest a better search query if not.`;
+        let aiReply = '';
+        try {
+            if (selectedModel.startsWith('gpt')) {
+                const res = await ApiService.sendOpenAIRequest(selectedModel, [
+                    { role: 'system', content: 'You are an assistant that checks if the information is sufficient and suggests query refinement.' },
+                    { role: 'user', content: prompt }
+                ]);
+                aiReply = res.choices[0].message.content.trim();
+            } else if (selectedModel.startsWith('gemini') || selectedModel.startsWith('gemma')) {
+                const session = ApiService.createGeminiSession(selectedModel);
+                const chatHistory = [
+                    { role: 'system', content: 'You are an assistant that checks if the information is sufficient and suggests query refinement.' },
+                    { role: 'user', content: prompt }
+                ];
+                const result = await session.sendMessage(prompt, chatHistory);
+                const candidate = result.candidates[0];
+                if (candidate.content.parts) {
+                    aiReply = candidate.content.parts.map(p => p.text).join(' ').trim();
+                } else if (candidate.content.text) {
+                    aiReply = candidate.content.text.trim();
+                }
+            }
+            if (aiReply.toLowerCase().startsWith('no')) {
+                UIController.addMessage('ai', `Information may be insufficient. Suggestion: ${aiReply}`);
+                // Optionally, offer a button to run the suggested query
+                // (UIController.addRefineSearchButton could be implemented)
+            } else {
+                UIController.addMessage('ai', `Information is likely sufficient. (${aiReply})`);
+            }
+        } catch (err) {
+            UIController.addMessage('ai', `Sufficiency check failed. Error: ${err && err.message ? err.message : err}`);
         }
     }
 
