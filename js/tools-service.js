@@ -117,11 +117,8 @@ const ToolsService = (function() {
       // Sort proxies by health score
       const sortedProxies = proxies.slice().sort((a, b) => (proxyHealth.get(b.name) || 0) - (proxyHealth.get(a.name) || 0));
       let partialResults = [];
-      let lastError = null;
       for (const proxy of sortedProxies) {
         try {
-          // Add logging for debugging
-          console.log(`[webSearch] Trying proxy: ${proxy.name} for ${searchUrl}`);
           const response = await fetch(proxy.formatUrl(searchUrl));
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const htmlString = await proxy.parseResponse(response);
@@ -131,39 +128,14 @@ const ToolsService = (function() {
           proxyHealth.set(proxy.name, (proxyHealth.get(proxy.name) || 1) + 2); // reward
           return results;
         } catch (err) {
-          console.warn(`[webSearch] Proxy ${proxy.name} failed:`, err);
-          lastError = err;
           proxyHealth.set(proxy.name, (proxyHealth.get(proxy.name) || 1) - 2); // penalize
-          // If we have partial results, return them
           if (partialResults.length) {
             if (onResult) partialResults.forEach(r => onResult(r));
             return partialResults;
           }
         }
       }
-      // As a last resort, try Utils.fetchWithProxyRetry if available
-      if (typeof Utils !== 'undefined' && Utils.fetchWithProxyRetry) {
-        try {
-          console.log('[webSearch] All custom proxies failed, trying Utils.fetchWithProxyRetry...');
-          const response = await Utils.fetchWithProxyRetry(searchUrl, { method: 'GET' });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const htmlString = await response.text();
-          const results = parseResults(htmlString);
-          if (results.length) {
-            results.forEach(result => { if (onResult) onResult(result); });
-            return results;
-          }
-        } catch (err) {
-          console.warn('[webSearch] Utils.fetchWithProxyRetry failed:', err);
-          lastError = err;
-        }
-      }
-      // If we reach here, all proxies failed
-      const errorMsg = lastError ? lastError.message : 'All proxies failed';
-      if (onResult) {
-        onResult({ title: 'Web search failed', url: '', snippet: errorMsg });
-      }
-      throw new Error('Web search failed: ' + errorMsg);
+      throw new Error('All proxies failed');
     }
 
     /**

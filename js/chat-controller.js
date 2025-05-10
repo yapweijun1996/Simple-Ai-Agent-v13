@@ -14,8 +14,12 @@ const ChatController = (function() {
     let lastThinkingContent = '';
     let lastAnswerContent = '';
     let readSnippets = [];
+    let lastToolCall = null;
+    let lastToolCallCount = 0;
+    const MAX_TOOL_CALL_REPEAT = 3;
     let lastSearchResults = [];
     let autoReadInProgress = false;
+    let toolCallHistory = [];
     let highlightedResultIndices = new Set();
     // Add a cache for read_url results
     const readCache = new Map();
@@ -66,7 +70,7 @@ Begin Reasoning Now:
                     // Pass highlight flag if this index is in highlightedResultIndices
                     const idx = streamed.length - 1;
                     UIController.addSearchResult(result, (url) => {
-                        ToolOrchestrator.processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } }, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
+                        processToolCall({ tool: 'read_url', arguments: { url, start: 0, length: 1122 } });
                     }, highlightedResultIndices.has(idx));
                 }, engine);
                 if (!results.length) {
@@ -98,10 +102,7 @@ Begin Reasoning Now:
                 const length = (typeof args.length === 'number' && args.length > 0) ? args.length : 1122;
                 const snippet = String(result).slice(start, start + length);
                 const hasMore = (start + length) < String(result).length;
-                UIController.addReadResult(args.url, snippet, hasMore, (url) => {
-                    const offset = (readCache.has(`${url}:${snippet.length}`) ? snippet.length : (readCache.get(`${url}:${snippet.length}`) || snippet.length));
-                    ToolOrchestrator.processToolCall({ tool: 'read_url', arguments: { url, start: offset, length: 2000 } }, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
-                });
+                UIController.addReadResult(args.url, snippet, hasMore);
                 const plainTextSnippet = `Read content from ${args.url}:\n${snippet}${hasMore ? '...' : ''}`;
                 chatHistory.push({ role: 'assistant', content: plainTextSnippet });
                 // Collect snippets for summarization
@@ -136,12 +137,6 @@ Begin Reasoning Now:
             UIController.clearStatus();
         }
     };
-
-    // At the top of the IIFE, add a global error handler:
-    window.addEventListener('error', function(event) {
-        UIController.addMessage('ai', 'An unexpected error occurred: ' + (event.error ? event.error.message : event.message));
-        UIController.clearStatus();
-    });
 
     /**
      * Initializes the chat controller
@@ -187,13 +182,6 @@ If you understand, follow these instructions for every relevant question. Do NOT
         
         // Set up event handlers through UI controller
         UIController.setupEventHandlers(sendMessage, clearChat);
-
-        // Inject toolHandlers into ToolOrchestrator
-        ToolOrchestrator.init({
-            web_search: async function(args, context) { /* logic from old toolHandlers.web_search, using context */ },
-            read_url: async function(args, context) { /* logic from old toolHandlers.read_url, using context */ },
-            instant_answer: async function(args, context) { /* logic from old toolHandlers.instant_answer, using context */ }
-        });
     }
 
     /**
@@ -400,7 +388,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             }
         } catch (error) {
             console.error('Error sending message:', error);
-            UIController.addMessage('ai', 'An unexpected error occurred. Please try again.');
+            UIController.addMessage('ai', 'Error: ' + error.message);
         } finally {
             // Update token usage display
             Utils.updateTokenDisplay(totalTokens);
@@ -459,7 +447,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Intercept JSON tool call in streaming mode
                 const toolCall = extractToolCall(fullReply);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
-                    await ToolOrchestrator.processToolCall(toolCall, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
+                    await processToolCall(toolCall);
                     return;
                 }
                 
@@ -517,7 +505,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Intercept tool call JSON
                 const toolCall = extractToolCall(reply);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
-                    await ToolOrchestrator.processToolCall(toolCall, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
+                    await processToolCall(toolCall);
                     return;
                 }
                 
@@ -594,7 +582,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Intercept JSON tool call in streaming mode
                 const toolCall = extractToolCall(fullReply);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
-                    await ToolOrchestrator.processToolCall(toolCall, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
+                    await processToolCall(toolCall);
                     return;
                 }
                 
@@ -653,7 +641,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 // Intercept tool call JSON
                 const toolCall = extractToolCall(textResponse);
                 if (toolCall && toolCall.tool && toolCall.arguments) {
-                    await ToolOrchestrator.processToolCall(toolCall, { chatHistory, UIController, SettingsController, handleOpenAIMessage, handleGeminiMessage });
+                    await processToolCall(toolCall);
                     return;
                 }
                 
@@ -677,6 +665,50 @@ Answer: [your final, concise answer based on the reasoning above]`;
                 }
             } catch (err) {
                 throw err;
+            }
+        }
+    }
+
+    // Enhanced processToolCall using registry and validation
+    async function processToolCall(call) {
+        if (!toolWorkflowActive) return;
+        const { tool, arguments: args, skipContinue } = call;
+        // Tool call loop protection
+        const callSignature = JSON.stringify({ tool, args });
+        if (lastToolCall === callSignature) {
+            lastToolCallCount++;
+        } else {
+            lastToolCall = callSignature;
+            lastToolCallCount = 1;
+        }
+        if (lastToolCallCount > MAX_TOOL_CALL_REPEAT) {
+            UIController.addMessage('ai', `Error: Tool call loop detected. The same tool call has been made more than ${MAX_TOOL_CALL_REPEAT} times in a row. Stopping to prevent infinite loop.`);
+            return;
+        }
+        // Log tool call
+        toolCallHistory.push({ tool, args, timestamp: new Date().toISOString() });
+        await toolHandlers[tool](args);
+        // Only continue reasoning if the last AI reply was NOT a tool call
+        if (!skipContinue) {
+            const lastEntry = chatHistory[chatHistory.length - 1];
+            let isToolCall = false;
+            if (lastEntry && typeof lastEntry.content === 'string') {
+                try {
+                    const parsed = JSON.parse(lastEntry.content);
+                    if (parsed.tool && parsed.arguments) {
+                        isToolCall = true;
+                    }
+                } catch {}
+            }
+            if (!isToolCall) {
+                const selectedModel = SettingsController.getSettings().selectedModel;
+                if (selectedModel.startsWith('gpt')) {
+                    await handleOpenAIMessage(selectedModel, '');
+                } else {
+                    await handleGeminiMessage(selectedModel, '');
+                }
+            } else {
+                UIController.addMessage('ai', 'Warning: AI outputted another tool call without reasoning. Stopping to prevent infinite loop.');
             }
         }
     }
@@ -711,7 +743,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
             if (readCache.has(cacheKey)) {
                 snippet = readCache.get(cacheKey);
             } else {
-                await ToolOrchestrator.processToolCall({ tool: 'read_url', arguments: { url, start, length: chunkSize }, skipContinue: true });
+                await processToolCall({ tool: 'read_url', arguments: { url, start, length: chunkSize }, skipContinue: true });
                 // Find the last snippet added to chatHistory
                 const lastEntry = chatHistory[chatHistory.length - 1];
                 if (lastEntry && typeof lastEntry.content === 'string' && lastEntry.content.startsWith('Read content from')) {
@@ -986,8 +1018,7 @@ Answer: [your final, concise answer based on the reasoning above]`;
         getChatHistory,
         getTotalTokens,
         clearChat,
+        processToolCall,
         getToolCallHistory: () => [...toolCallHistory],
     };
-})();
-
-window.ChatController = ChatController; 
+})(); 
